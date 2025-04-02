@@ -1,0 +1,68 @@
+---
+title: "guesser_knower_test_battery_dogs"
+author: "Lucrezia Lonardo"
+date: "2025-02-27"
+output: html_document
+---
+
+### Load libraries and custom functions
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(ggplot2)
+library(lme4)
+library(summarytools)
+library(car)
+# source("functions/diagnostic_fcns.r")
+# source("functions/glmm_stability.r")
+# source("functions/boot_glmm.r")
+```
+
+
+### Import data
+
+```{r}
+xdata <- read.csv("data/test_phase.csv", header = TRUE) %>% 
+  #  mutate(choice_letter = as.factor(choice_letter),
+  #        condition = as.factor(condition),
+  #        age_months = as.numeric(age_months)) %>% 
+  filter(!is.na(choice_binary)) %>%  
+  droplevels()
+
+which(is.na(xdata$choice_binary)) #double check for NAs
+```
+###Inspect data
+```{r}
+str(xdata)
+```
+###Descriptive stats
+```{r}
+subj.data<- xdata %>% 
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials)
+```
+
+
+
+## Plot descriptive stats
+
+```{r}
+plot.data<- subj.data %>% 
+  group_by(condition) %>% 
+  summarise(avg_knower_pref=mean(prop_knower_pref))
+
+ggplot(data=plot.data, aes(x=condition, y= avg_knower_pref)) + 
+  geom_bar(stat = "identity")
+
+```
+
+
+
+
+```{r}
+
+```
+
+
