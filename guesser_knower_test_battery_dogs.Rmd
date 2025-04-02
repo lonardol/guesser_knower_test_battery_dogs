@@ -13,6 +13,8 @@ library(ggplot2)
 library(lme4)
 library(summarytools)
 library(car)
+library(lmerTest)
+library(forcats)
 # source("functions/diagnostic_fcns.r")
 # source("functions/glmm_stability.r")
 # source("functions/boot_glmm.r")
@@ -26,7 +28,7 @@ xdata <- read.csv("data/test_phase.csv", header = TRUE) %>%
   #  mutate(choice_letter = as.factor(choice_letter),
   #        condition = as.factor(condition),
   #        age_months = as.numeric(age_months)) %>% 
-  filter(!is.na(choice_binary)) %>%  
+  #filter(!is.na(choice_binary)) %>%  
   droplevels()
 
 which(is.na(xdata$choice_binary)) #double check for NAs
@@ -46,23 +48,397 @@ subj.data<- xdata %>%
 
 
 
-## Plot descriptive stats
+### Plot performance in all conditions
 
 ```{r}
 plot.data<- subj.data %>% 
   group_by(condition) %>% 
-  summarise(avg_knower_pref=mean(prop_knower_pref))
+  summarise(avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+            se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se)   # Upper 95% CI
+
+
+#Error bars show 95% confidence intervals; 
+#asterisk indicates significance of the comparison with chance level (icpt only models)
 
 ggplot(data=plot.data, aes(x=condition, y= avg_knower_pref)) + 
-  geom_bar(stat = "identity")
-
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +  # Error bars
+  geom_text(aes(x = 2, y = 0.69, label = "*"), size = 8) +
+  geom_hline(yintercept = 0.5, lty=2) +
+  coord_cartesian(ylim = c(0.2, 0.7))
+```
+### Boxplot 
+```{r}
+ggplot(data=subj.data, aes(x = condition, y = prop_knower_pref)) +
+  geom_boxplot()  +
+  geom_jitter(shape=20, position=position_jitter(0.1), alpha=.5)+
+ #geom_line(aes(group = dog_id), alpha=0.3, lty=2) +
+  ylim(c(0,1))+
+  theme_bw()
+  
 ```
 
+### Icpt-only bin model 1) all experimental conditions (except control)
+```{r}
+#Subset the data to exclude guesser present
+exp.data<-xdata %>% 
+  filter(condition!="present")
+```
 
+ 
+```{r}
+# Run model
+icpt.mm1=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=exp.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm1) #overall, across all experimental conditions, dogs' prefer the knower
+#slightly above chance level (p=0.019)
 
+#transform logit scale values to probability values
+confint_icpt.mm1 <- confint(icpt.mm1, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(icpt.mm1)[1])
+confint_prob <- logit_to_prob(confint_icpt.mm1["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept, 3)))
+print(paste("95% CI for probability:", round(confint_prob, 3)))
+```
+### Icpt-only bin model 2) back turned
+```{r}
+#Subset the data to keep only guesser back turned
+bt.data<-xdata %>% 
+  filter(condition=="back_turned")
+```
+
+ 
+```{r}
+# Run model
+icpt.mm2=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=bt.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
 
 ```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm2)
+
+#transform logit scale values to probability values
+confint_icpt.mm2 <- confint(icpt.mm2, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(icpt.mm2)[1])
+confint_prob <- logit_to_prob(confint_icpt.mm2["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept, 3)))
+print(paste("95% CI for probability:", round(confint_prob, 3)))
+```
+### Icpt-only bin model 3) absent
+```{r}
+#Subset the data to keep only guesser absent
+abs.data<-xdata %>% 
+  filter(condition=="absent")
+```
+
+ 
+```{r}
+# Run model
+icpt.mm3=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=abs.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm3)
+#dogs' performance not significantly different from chance in the abs condition
+
+#transform logit scale values to probability values
+confint_icpt.mm3 <- confint(icpt.mm3, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept3 <- logit_to_prob(fixef(icpt.mm3)[1])
+confint_prob3 <- logit_to_prob(confint_icpt.mm3["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept3, 3)))
+print(paste("95% CI for probability:", round(confint_prob3, 3)))
+```
+### Icpt-only bin model 4) looking away
+```{r}
+#Subset the data to keep only guesser absent
+la.data<-xdata %>% 
+  filter(condition=="looking_away")
+```
+
+ 
+```{r}
+# Run model
+icpt.mm4=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=la.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm4)
+#dogs' performance not significantly different from chance in the looking away condition
+
+#transform logit scale values to probability values
+confint_icpt.mm4 <- confint(icpt.mm4, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept4 <- logit_to_prob(fixef(icpt.mm4)[1])
+confint_prob4 <- logit_to_prob(confint_icpt.mm4["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept4, 3)))
+print(paste("95% CI for probability:", round(confint_prob4, 3)))
+```
+# First trial only
+### Icpt-only bin mod 1ft) all experimental conditions (except control)
+```{r}
+#create trial within condition variable
+ft.data<-xdata %>% 
+  group_by(dog_id, condition) %>%
+  mutate(trial_within_cond = rank(trial, ties.method = "first")) %>%
+  ungroup() %>% 
+  filter(trial_within_cond==1)
+
+
+#Subset the data to exclude guesser present
+ft.exp.data<-ft.data %>% 
+  filter(condition!="present")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm1=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.exp.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm1) #overall, across all experimental conditions, dogs did not prefer the knower above chance level from the first trial (Wald test of icpt p=0.199)
+
+#LL: to be adapted
+#transform logit scale values to probability values
+confint_icpt.mm1 <- confint(icpt.mm1, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(icpt.mm1)[1])
+confint_prob <- logit_to_prob(confint_icpt.mm1["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept, 3)))
+print(paste("95% CI for probability:", round(confint_prob, 3)))
+```
+### Icpt-only bin mod 2ft) back turned
+```{r}
+#Subset the data to keep only guesser back turned
+ft.bt.data<-ft.data %>% 
+  filter(condition=="back_turned")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm2=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.bt.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm2) #In the bt condition, dogs preferred the knower slightly
+#above chance level from trial 1
+
+#LL: to be adapted
+#transform logit scale values to probability values
+confint_icpt.mm2 <- confint(icpt.mm2, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(icpt.mm2)[1])
+confint_prob <- logit_to_prob(confint_icpt.mm2["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept, 3)))
+print(paste("95% CI for probability:", round(confint_prob, 3)))
+```
+### Icpt-only bin mod 3ft) absent
+```{r}
+#Subset the data to keep only guesser absent
+ft.abs.data<-ft.data %>% 
+  filter(condition=="absent")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm3=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.abs.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm3)
+#dogs' performance not significantly different from chance in the first trial of the 
+#absent condition
+
+#LL: to be adapted
+#transform logit scale values to probability values
+confint_icpt.mm3 <- confint(icpt.mm3, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept3 <- logit_to_prob(fixef(icpt.mm3)[1])
+confint_prob3 <- logit_to_prob(confint_icpt.mm3["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept3, 3)))
+print(paste("95% CI for probability:", round(confint_prob3, 3)))
+```
+### Icpt-only bin mod 4ft) looking away
+```{r}
+#Subset the data to keep only guesser absent
+ft.la.data<-ft.data %>% 
+  filter(condition=="looking_away")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm4=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.la.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#Warning: Model is nearly unidentifiable: large eigenvalue ratio
+ #- Rescale variables?
+#LL: due to large amount of 0s?
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm4)
+#dogs' performance not significantly different from chance in the first trial of
+# the looking away condition
+
+#LL: to be adapted
+#transform logit scale values to probability values
+confint_icpt.mm4 <- confint(icpt.mm4, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept4 <- logit_to_prob(fixef(icpt.mm4)[1])
+confint_prob4 <- logit_to_prob(confint_icpt.mm4["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept4, 3)))
+print(paste("95% CI for probability:", round(confint_prob4, 3)))
+```
+
+### GLMM 01 - difference between conditions
+```{r}
+model.data <- xdata %>%
+  mutate(condition = fct_recode(condition, 
+                                "back turned" = "back_turned", 
+                                "looking away" = "looking_away")) %>%
+  mutate(condition = fct_relevel(condition, "present")) %>%  # Set "present" as reference
+  mutate(z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[4]), center=TRUE, scale= FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)))
+
+#session nr. to be added once data is collected in session 2 and 3
+
+levels(as.factor(model.data$condition)) #worked
 
 ```
+
+```{r}
+#Run the model
+mm1_choice=glmer(choice_binary ~ condition + z.age + z.trial +
+                (1+condition.abs.c+condition.bt.c+condition.la.c+z.age+z.trial|dog_id),
+             data=model.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+round(summary(mm1_choice)$coefficients,2)
+
+round(drop1(mm1_choice, test="Chisq"),3)
+
+mm1_choice_drop1 <- round(drop1(mm1_choice, test="Chisq"),3) %>% 
+  filter(!is.na(npar)) %>% 
+  add_row(npar = rep(NA,1),  .before = 1)
+mm1_choice_drop1
+```
+#LL: to be adapted from here
+
+```{r}
+# Check for collinearity
+library(car)
+xx=lm(opaque_choice ~ condition+z.trial+first_condition, data=first_choice_data)
+vif(xx)
+```
+#### confidence intervals 
+```{r}
+mm1_choice.ci=boot.glmm.pred(model.res=mm1_choice, excl.warnings=F,
+nboots=1000, para=T, n.cores="all-1", resol=1000, level=0.95)
+```
+
+#### model stability
+```{r}
+m.stab.fc <- glmm.model.stab(model.res = mm1_choice)
+m.stab.fc$detailed$warnings
+as.data.frame(round(m.stab.fc$summary[1:4, -1], 2))
+
+m.stab.plot(round(m.stab.fc$summary[, -1], 2))
+```
+
+
+#### output table - first choice
+
+```{r}
+mm1_choice_output_table <-
+  bind_cols(as.data.frame(summary(mm1_choice)$coeff),
+            mm1_choice_drop1,
+            mm1_choice.ci$ci.estimates,
+            m.stab.fc$summary[1:4, -1],
+            mm1_choice_aic_drop1_delta_df) %>%
+  dplyr::select(
+    Estimate,
+    SE = `Std. Error`,
+    Chi2 = LRT,
+    df = npar,
+    p = `Pr(Chi)`,
+    LowerCI = X2.5.,
+    UpperCI = X97.5.,
+    min,
+    max,
+    delta_aic
+  ) %>% #
+  mutate(across(.cols = c(p), ~ format(round(.x, 3), nsmall = 3))) %>%
+  mutate(across(.cols = c(Estimate:df), ~ format(round(.x, 2), nsmall = 2))) %>%
+ mutate(across(.cols = c(LowerCI:max), ~ format(round(.x, 2), nsmall = 2))) %>%  #mutate(across(Chi2:p, ~replace_na(.x, "")))%>%
+  mutate(p = replace(p, p == 0, "<0.001"))
+
+write.csv(mm1_choice_output_table, file = "saves/mm1_choice_output_table.csv")
+```
+
+```{r}
+save.image("./workspace/guesser_knower_workspace.RData")
+```
+
 
 
