@@ -27,7 +27,7 @@ source("functions/boot_glmm.r")
 xdata <- read.csv("data/test_phase_85_dogs_in_order_of_date.csv", header = TRUE) %>% #data file with the first 85 tested dogs
     mutate(dog_id = as.factor(dog_id),
            condition = as.factor(condition)) %>% 
-    filter(!is.na(choice_binary)) %>%  #Am I excluding no choices and irrelevant choices here?
+    filter(!is.na(choice_binary)) %>%  # Excluding no choices and irrelevant choices
     droplevels()
 
 which(is.na(xdata$choice_binary)) #double check for NAs
@@ -464,6 +464,7 @@ mm1_choice=glmer(choice_binary ~ condition + z.age + z.trial +
             control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
 
 round(summary(mm1_choice)$coefficients,2)
+summary(mm1_choice)$varcor
 
 round(drop1(mm1_choice, test="Chisq"),3)
 
@@ -500,6 +501,8 @@ vif(xx)
 ```{r}
 mm1_choice.ci=boot.glmm.pred(model.res=mm1_choice, excl.warnings=F,
 nboots=1000, para=T, n.cores="all-1", resol=1000, level=0.95)
+
+round(mm1_choice.ci$ci.estimates,3)
 ```
 
 #### model stability
