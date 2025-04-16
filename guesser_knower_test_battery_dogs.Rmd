@@ -15,43 +15,84 @@ library(summarytools)
 library(car)
 library(lmerTest)
 library(forcats)
-# source("functions/diagnostic_fcns.r")
-# source("functions/glmm_stability.r")
-# source("functions/boot_glmm.r")
+source("functions/diagnostic_fcns.r")
+source("functions/glmm_stability.r")
+source("functions/boot_glmm.r")
 ```
 
 
 ### Import data
 
 ```{r}
-xdata <- read.csv("data/test_phase.csv", header = TRUE) %>% 
-  #  mutate(choice_letter = as.factor(choice_letter),
-  #        condition = as.factor(condition),
-  #        age_months = as.numeric(age_months)) %>% 
-  #filter(!is.na(choice_binary)) %>%  
-  droplevels()
+xdata <- read.csv("data/test_phase_85_dogs_in_order_of_date.csv", header = TRUE) %>% #data file with the first 85 tested dogs
+    mutate(dog_id = as.factor(dog_id),
+           condition = as.factor(condition)) %>% 
+    filter(!is.na(choice_binary)) %>%  #Am I excluding no choices and irrelevant choices here?
+    droplevels()
 
 which(is.na(xdata$choice_binary)) #double check for NAs
 ```
 ###Inspect data
 ```{r}
 str(xdata)
+length(unique(levels(xdata$dog_id))) #85 dogs
 ```
 ###Descriptive stats
 ```{r}
 subj.data<- xdata %>% 
+  group_by(dog_id) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials,
+            sex=sex[1],
+            breed=breed[1], 
+            age=age[1])
+
+table(subj.data$sex) #48 females
+table(subj.data$breed) #there's a typo in one belgian_ shepherd
+summary(subj.data$age)
+
+#Dog extra_5 doesn't have a breed?
+
+#knower preference across all conditions (including control)
+#only 3 dogs out of 85 performed significantly above chance level (binomial tests) 17/23 and 18/24 trials knower pref
+
+#remove control condition
+subj.data.test<- xdata %>% 
+  filter(condition!="present") %>% 
+  group_by(dog_id) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials,
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1])
+
+#knower preference across test conditions (excluding control)
+#again 3 dogs out of 85 performed significantly above chance level (binomial tests) 13/17 and 15/18 trials knower pref including test conditions only
+
+subj.data.cond<- xdata %>% 
   group_by(dog_id, condition) %>% 
   summarise(knower_pref=sum(choice_binary),
             trials=length(choice_binary),
-            prop_knower_pref=knower_pref/trials)
+            prop_knower_pref=knower_pref/trials,
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1])
+
+sum(subj.data.cond$knower_pref==6) #5 combinations of dog and condition in which the dog performed above chance level (6/6 trials, binomial test)
+subj.data.cond$condition[subj.data.cond$knower_pref==6] #absent, back turned, back turned, absent, back turned
+
 ```
-
-
 
 ### Plot performance in all conditions
 
 ```{r}
-plot.data<- subj.data %>% 
+plot.data<- subj.data.cond %>% 
+  mutate(condition=fct_recode(condition, 
+                                "back turned" = "back_turned", 
+                                "looking away" = "looking_away"),
+                condition = fct_relevel(condition, "present")) %>% 
   group_by(condition) %>% 
   summarise(avg_knower_pref=mean(prop_knower_pref, na.rm=T),
             se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
@@ -62,20 +103,37 @@ plot.data<- subj.data %>%
 #Error bars show 95% confidence intervals; 
 #asterisk indicates significance of the comparison with chance level (icpt only models)
 
-ggplot(data=plot.data, aes(x=condition, y= avg_knower_pref)) + 
+bar_plot<-ggplot(data=plot.data,
+  aes(x=condition, y= avg_knower_pref, fill=condition)) + 
   geom_bar(stat = "identity") +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +  # Error bars
-  geom_text(aes(x = 2, y = 0.69, label = "*"), size = 8) +
+  geom_text(aes(x = 1, y = 0.69, label = "*"), size = 8) +
+  geom_text(aes(x = 3, y = 0.69, label = "*"), size = 8) +
   geom_hline(yintercept = 0.5, lty=2) +
-  coord_cartesian(ylim = c(0.2, 0.7))
+  coord_cartesian(ylim = c(0.2, 0.7))+
+  ylab("average knower preference")+
+  theme_bw()
+
+bar_plot
 ```
+```{r}
+#save the barplot
+ggsave(bar_plot , filename = "plots/barplot_conditions_session1_first85dogs.png", width = 10, height = 6, scale = 0.5)
+```
+
 ### Boxplot 
 ```{r}
-ggplot(data=subj.data, aes(x = condition, y = prop_knower_pref)) +
+ggplot(data=subj.data.cond %>% 
+        mutate(condition=fct_recode(condition, 
+                                "back turned" = "back_turned", 
+                                "looking away" = "looking_away"),
+                condition = fct_relevel(condition, "present")), 
+       aes(x = condition, y = prop_knower_pref, fill=condition)) +
   geom_boxplot()  +
   geom_jitter(shape=20, position=position_jitter(0.1), alpha=.5)+
- #geom_line(aes(group = dog_id), alpha=0.3, lty=2) +
+  geom_line(aes(group = dog_id), alpha=0.03, lty=1) +
   ylim(c(0,1))+
+  ylab("proportion knower preference")+
   theme_bw()
   
 ```
@@ -87,7 +145,6 @@ exp.data<-xdata %>%
   filter(condition!="present")
 ```
 
- 
 ```{r}
 # Run model
 icpt.mm1=glmer(choice_binary ~ 1 +
@@ -95,11 +152,12 @@ icpt.mm1=glmer(choice_binary ~ 1 +
              data=exp.data, family=binomial, 
             control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
 ```
+
 ```{r}
 # Evaluate results
 # Test if response probability is different from chance (0, on the logit scale)
 summary(icpt.mm1) #overall, across all experimental conditions, dogs' prefer the knower
-#slightly above chance level (p=0.019)
+#slightly above chance level: 53% (p= 0.043)
 
 #transform logit scale values to probability values
 confint_icpt.mm1 <- confint(icpt.mm1, method = "Wald")
@@ -117,7 +175,6 @@ bt.data<-xdata %>%
   filter(condition=="back_turned")
 ```
 
- 
 ```{r}
 # Run model
 icpt.mm2=glmer(choice_binary ~ 1 +
@@ -130,12 +187,13 @@ icpt.mm2=glmer(choice_binary ~ 1 +
 # Evaluate results
 # Test if response probability is different from chance (0, on the logit scale)
 summary(icpt.mm2)
+#on average dogs performed significantly above chance level in the back turned condition: 60% (p<.001)
 
 #transform logit scale values to probability values
 confint_icpt.mm2 <- confint(icpt.mm2, method = "Wald")
 logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
-prob_intercept <- logit_to_prob(fixef(icpt.mm2)[1])
-confint_prob <- logit_to_prob(confint_icpt.mm2["(Intercept)", ])
+prob_intercept2 <- logit_to_prob(fixef(icpt.mm2)[1])
+confint_prob2 <- logit_to_prob(confint_icpt.mm2["(Intercept)", ])
 
 print(paste("Estimated probability:", round(prob_intercept, 3)))
 print(paste("95% CI for probability:", round(confint_prob, 3)))
@@ -160,7 +218,7 @@ icpt.mm3=glmer(choice_binary ~ 1 +
 # Evaluate results
 # Test if response probability is different from chance (0, on the logit scale)
 summary(icpt.mm3)
-#dogs' performance not significantly different from chance in the abs condition
+#dogs' performance not significantly different from chance in the abs condition (47%)
 
 #transform logit scale values to probability values
 confint_icpt.mm3 <- confint(icpt.mm3, method = "Wald")
@@ -178,7 +236,6 @@ la.data<-xdata %>%
   filter(condition=="looking_away")
 ```
 
- 
 ```{r}
 # Run model
 icpt.mm4=glmer(choice_binary ~ 1 +
@@ -191,7 +248,7 @@ icpt.mm4=glmer(choice_binary ~ 1 +
 # Evaluate results
 # Test if response probability is different from chance (0, on the logit scale)
 summary(icpt.mm4)
-#dogs' performance not significantly different from chance in the looking away condition
+#dogs' performance not significantly different from chance in the looking away condition (50%)
 
 #transform logit scale values to probability values
 confint_icpt.mm4 <- confint(icpt.mm4, method = "Wald")
@@ -202,6 +259,38 @@ confint_prob4 <- logit_to_prob(confint_icpt.mm4["(Intercept)", ])
 print(paste("Estimated probability:", round(prob_intercept4, 3)))
 print(paste("95% CI for probability:", round(confint_prob4, 3)))
 ```
+
+### Icpt-only bin model 5) present
+```{r}
+#Subset the data to keep only guesser absent
+present.data<-xdata %>% 
+  filter(condition=="present")
+```
+
+```{r}
+# Run model
+icpt.mm5=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=present.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm5)
+#dogs significantly preferred the knower above chance level in the present condition (55%, p=.024)
+
+#transform logit scale values to probability values
+confint_icpt.mm5 <- confint(icpt.mm5, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept5 <- logit_to_prob(fixef(icpt.mm5)[1])
+confint_prob5 <- logit_to_prob(confint_icpt.mm5["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept4, 3)))
+print(paste("95% CI for probability:", round(confint_prob4, 3)))
+```
+
 # First trial only
 ### Icpt-only bin mod 1ft) all experimental conditions (except control)
 ```{r}
@@ -230,7 +319,7 @@ ft.icpt.mm1=glmer(choice_binary ~ 1 +
 ```{r}
 # Evaluate results
 # Test if response probability is different from chance (0, on the logit scale)
-summary(ft.icpt.mm1) #overall, across all experimental conditions, dogs did not prefer the knower above chance level from the first trial (Wald test of icpt p=0.199)
+summary(ft.icpt.mm1) #overall, across all experimental conditions, dogs did not prefer the knower above chance level from the first trial (Wald test of icpt p=0.287)
 
 #LL: to be adapted
 #transform logit scale values to probability values
@@ -261,8 +350,8 @@ ft.icpt.mm2=glmer(choice_binary ~ 1 +
 ```{r}
 # Evaluate results
 # Test if response probability is different from chance (0, on the logit scale)
-summary(ft.icpt.mm2) #In the bt condition, dogs preferred the knower slightly
-#above chance level from trial 1
+summary(ft.icpt.mm2) #In the bt condition, dogs tended to prefer the knower slightly
+#above chance level from trial 1 (p=0.0676)
 
 #LL: to be adapted
 #transform logit scale values to probability values
@@ -370,7 +459,7 @@ levels(as.factor(model.data$condition)) #worked
 ```{r}
 #Run the model
 mm1_choice=glmer(choice_binary ~ condition + z.age + z.trial +
-                (1+condition.abs.c+condition.bt.c+condition.la.c+z.age+z.trial|dog_id),
+                (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial|dog_id),
              data=model.data, family=binomial, 
             control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
 
@@ -378,17 +467,33 @@ round(summary(mm1_choice)$coefficients,2)
 
 round(drop1(mm1_choice, test="Chisq"),3)
 
+#P values of likelihood ratio tests
 mm1_choice_drop1 <- round(drop1(mm1_choice, test="Chisq"),3) %>% 
   filter(!is.na(npar)) %>% 
   add_row(npar = rep(NA,1),  .before = 1)
 mm1_choice_drop1
+
+#Delta AIC
+drop1.mm1_fc=drop1(mm1_choice, test="Chisq")
+round(drop1.mm1_fc,3)
+mm1_fc_aic<-drop1.mm1_fc[1, "AIC"]
+mm1_fc_aic_drop1<-drop1.mm1_fc[, "AIC"][-1]
+mm1_fc_aic_drop1_delta<- c(NA, round(mm1_fc_aic - mm1_fc_aic_drop1, 2))
+c <- data.frame(delta_aic = mm1_fc_aic_drop1_delta)
 ```
-#LL: to be adapted from here
+
+#Pairwise comparisons
+```{r}
+library(emmeans)
+emm <- emmeans(mm1_choice, ~ condition) # Computes the marginal means of the response for each level of condition, adjusting for the random effects and other model terms
+pairs(emm)
+```
+# Model assumptions and checks
 
 ```{r}
 # Check for collinearity
 library(car)
-xx=lm(opaque_choice ~ condition+z.trial+first_condition, data=first_choice_data)
+xx=lm(choice_binary ~ condition+z.trial+z.age, data=model.data)
 vif(xx)
 ```
 #### confidence intervals 
@@ -399,11 +504,11 @@ nboots=1000, para=T, n.cores="all-1", resol=1000, level=0.95)
 
 #### model stability
 ```{r}
-m.stab.fc <- glmm.model.stab(model.res = mm1_choice)
-m.stab.fc$detailed$warnings
-as.data.frame(round(m.stab.fc$summary[1:4, -1], 2))
+m.stab.c <- glmm.model.stab(model.res = mm1_choice)
+m.stab.c$detailed$warnings
+as.data.frame(round(m.stab.c$summary[1:4, -1], 2))
 
-m.stab.plot(round(m.stab.fc$summary[, -1], 2))
+m.stab.plot(round(m.stab.c$summary[, -1], 2))
 ```
 
 
@@ -414,8 +519,9 @@ mm1_choice_output_table <-
   bind_cols(as.data.frame(summary(mm1_choice)$coeff),
             mm1_choice_drop1,
             mm1_choice.ci$ci.estimates,
-            m.stab.fc$summary[1:4, -1],
-            mm1_choice_aic_drop1_delta_df) %>%
+            m.stab.c$summary[1:4, -1]#,
+            #mm1_choice_aic_drop1_delta_df
+            ) %>%
   dplyr::select(
     Estimate,
     SE = `Std. Error`,
@@ -433,7 +539,7 @@ mm1_choice_output_table <-
  mutate(across(.cols = c(LowerCI:max), ~ format(round(.x, 2), nsmall = 2))) %>%  #mutate(across(Chi2:p, ~replace_na(.x, "")))%>%
   mutate(p = replace(p, p == 0, "<0.001"))
 
-write.csv(mm1_choice_output_table, file = "saves/mm1_choice_output_table.csv")
+write.csv(mm1_choice_output_table, file = "saves/mm1_choice_output_table_session1_first85dogs.csv")
 ```
 
 ```{r}
