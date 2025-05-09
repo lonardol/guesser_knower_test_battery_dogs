@@ -549,5 +549,40 @@ write.csv(mm1_choice_output_table, file = "saves/mm1_choice_output_table_session
 save.image("./workspace/guesser_knower_workspace.RData")
 ```
 
+# Inter-observer reliability (choice - binary variable, repeated obs. per subj)
+```{r}
+#read in reliability scorings
+reliab.data<- read.csv("data/gk_reliability_session1.csv", header=T) %>% 
+  mutate(original_code_fct=as.factor(original_code),
+         recoding_FL_fct=as.factor(recoding_FL))
+
+str(reliab.data)
+unique(levels(as.factor(reliab.data$dog_name))) #31 dogs coded, 744 trials in total
+which(is.na(reliab.data$original_code)) #contains one NA, recoded as missing to calculate % agreement
+
+reliab.data$original_code[is.na(reliab.data$original_code)] <- "missing"
+
+#Calculate Percentage Agreement
+percentage_agreement <- sum(reliab.data$recoding_FL == reliab.data$original_code) / nrow(reliab.data) * 100
+percentage_agreement #99.46%
+
+library(tidyr)
+long.reliab.data <- pivot_longer(reliab.data, cols = c(recoding_FL, original_code),
+                          names_to = "rater", values_to = "rating")
+
+str(long.reliab.data)
+summary(long.reliab.data$rating)
+
+#binomial GLMM to test if the rater has an influence on the rating
+reliab.glmm <- glmer(rating ~ rater + (1 | dog_name), data = long.reliab.data,
+               family = binomial)
+
+round(summary(reliab.glmm)$coefficients,2)
+
+round(drop1(reliab.glmm, test="Chisq"),3)
+
+#fixed effect for rater not significant, not suggesting significant disagreement 
+#between coders
+```
 
 
