@@ -1,0 +1,1670 @@
+---
+title: "guesser_knower_test_battery_dogs"
+author: "Lucrezia Lonardo"
+date: "2025-02-27"
+output: html_document
+---
+
+### Load libraries and custom functions
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(ggplot2)
+library(lme4)
+library(summarytools)
+library(car)
+library(lmerTest)
+library(forcats)
+source("functions/diagnostic_fcns.r")
+source("functions/glmm_stability.r")
+source("functions/boot_glmm.r")
+# load("./workspace/guesser_knower_workspace_all_dogs_all_sessions.RData")
+```
+
+
+### Import data
+
+```{r}
+xdata_withNAs <- read_csv("data/gk_test data.csv", show_col_types = FALSE) %>% #data file with all dogs tested 
+    mutate(dog_id = as.factor(dog_id),
+           condition = as.factor(condition)) 
+
+sum(is.na(xdata_withNAs$choice_binary)) #in total, 10 trials have missing data (and could not be repeated)
+
+#number of missing trials in 1st session
+sum(is.na(xdata_withNAs$choice_binary) & xdata_withNAs$session == 1) #8
+#number of missing trials in 2nd session
+sum(is.na(xdata_withNAs$choice_binary) & xdata_withNAs$session == 2) #1
+#number of missing trials in 3rd session
+sum(is.na(xdata_withNAs$choice_binary) & xdata_withNAs$session == 3) #1 
+
+xdata<-xdata_withNAs%>% 
+    filter(!is.na(choice_binary)) %>%  # Excluding no choices and irrelevant choices 
+    droplevels()
+
+which(is.na(xdata$choice_binary)) #double check for NAs
+```
+###Inspect data
+```{r}
+str(xdata)
+
+#split data of 2 sessions
+session1<-xdata %>% 
+  filter(session==1) %>% 
+  droplevels()
+
+session2<-xdata %>% 
+  filter(session==2) %>% 
+  droplevels()
+
+session3<-xdata %>% 
+  filter(session==3) %>% 
+  droplevels()
+
+
+length(unique(levels(session1$dog_id))) #93 dogs tested in session 1
+length(unique(levels(session2$dog_id))) # 87 of which only 87 came back for session 2
+length(unique(levels(session3$dog_id))) # 84 dogs tested in session 3
+unique(levels(as.factor(session3$dog_name)))
+length(unique(levels(as.factor(xdata$dog_name)))) #93 dogs (names) in total
+
+#which dogs participated in which sessions?
+table(xdata$dog_id, xdata$session)
+#5 dogs with only 1 session (session 1): "Bonda", "Boomer2", "Cookie12", "Hilde", "Paul3"
+#5 dogs with only 2 sessions (1&2, unless specified): "Emma10" (1 & 3), "Mickey3", "Nika2", "Ragnar", "Sixtus"
+#so in total, 83 dogs have the full dataset (3 sessions), but here we are analysing all 93 of them
+
+#Nr. valid trials per session
+sum(!is.na(session1$choice_binary)) #2224
+sum(!is.na(session2$choice_binary)) #2087
+sum(!is.na(session3$choice_binary)) #2015
+```
+###Time between sessions 
+```{r}
+date_data <- xdata %>%
+  mutate(test_date = as.Date(test_date, format = "%d/%m/%Y")) %>%
+  group_by(dog_name, session) %>%
+  summarise(date_session = min(test_date), .groups = "drop") %>% #we keep only one line per session and per dog
+  pivot_wider(names_from = session, values_from = date_session, names_prefix = "session_")  %>% #for each dog we put the date of the sessions in different columns
+  mutate(delay_1_2 = as.numeric(session_2 - session_1),
+         delay_2_3 = as.numeric(session_3 - session_2),
+         delay_1_3 = as.numeric(session_3 - session_1))
+print(date_data)
+
+mean_delay_1_2 <- mean(date_data$delay_1_2, na.rm = TRUE)
+mean_delay_2_3 <- mean(date_data$delay_2_3, na.rm = TRUE)
+mean_delay_1_3 <- mean(date_data$delay_1_3, na.rm = TRUE)
+sd_delay_1_2 <- sd(date_data$delay_1_2, na.rm = TRUE)
+sd_delay_2_3 <- sd(date_data$delay_2_3, na.rm = TRUE)
+sd_delay_1_3 <- sd(date_data$delay_1_3, na.rm = TRUE)
+
+cat("Mean delay S1-S2 :", round(mean_delay_1_2, 2), "days\n")
+cat("Mean delay S2-S3:", round(mean_delay_2_3, 2), "days\n")
+cat("Mean delay S1-S3:", round(mean_delay_1_3, 2), "days\n")
+
+cat("Standard Deviation delay S1-S2:", round(sd_delay_1_2, 2), "days\n")
+cat("Standard Deviation delay S2-S3:", round(sd_delay_2_3, 2), "days\n")
+cat("Standard Deviation delay S1-S3:", round(sd_delay_1_3, 2), "days\n")
+```
+###Descriptive stats
+```{r}
+subj.data<- xdata %>% 
+  group_by(dog_id) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials,
+            sex=sex[1],
+            breed=breed[1], 
+            age=age[1])
+
+table(subj.data$sex) #52 females
+table(subj.data$breed) 
+summary(session1$age)
+
+#knower preference across all conditions (excluding control)
+
+#remove control condition
+subj.data.test<- xdata %>% 
+  filter(condition!="present") %>% 
+  group_by(dog_id) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials,
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1])
+
+mean(subj.data.test$prop_knower_pref) # 54%
+# 6 dogs (16, 19, 33, 37, 53, 79)  performed significantly above chance level (binomial tests) when pooling together all test conditions (excluding control) of all 3 sessions. Dog 53, a shetland sheepdog, performed best with knower pref=72%
+#Followed by dog 37, a maltese, who had knower pref=70%
+#Dog 68, a Bedlington terrier who got excluded in session 3 (pretraining I think), performed significantly below chance level: knower pref=26%
+
+#knower preference across conditions (including control)
+
+subj.data.cond<- xdata %>% 
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials,
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1])
+
+mean(subj.data.cond$prop_knower_pref) # 55%
+
+sum(subj.data.cond$knower_pref==6) #18 combinations of dog and condition in which the dog performed above chance level (6/6 trials, binomial test)
+subj.data.cond$condition[subj.data.cond$knower_pref==6] #4 absent, 3 back turned, 5 present, 6 looking away (only in 3rd session)
+
+```
+
+### Plot performance in all conditions
+
+```{r}
+plot.data<- subj.data.cond %>% 
+  mutate(condition=fct_recode(condition, 
+                                "back turned" = "back_turned", 
+                                "looking away" = "looking_away"),
+                condition = fct_relevel(condition, "present")) %>% 
+  group_by(condition) %>% 
+  summarise(avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+            se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se)   # Upper 95% CI
+
+
+#Error bars show 95% confidence intervals; 
+#asterisk indicates significance of the comparison with chance level (icpt only models)
+
+
+#OLD, 2 browns and 2 teals my_cols <- c("#8C510A", "#BF812D", "#80CDC1", "#01665E")
+#old2 #my_cols <- viridisLite::viridis(4)
+my_cols <- c("#A8E1D8", "#66C3B3", "#1A8F87", "#01665E")
+
+# heights where the bars should be drawn
+y_base  <- 0.64   # first bar height
+spacing <- 0.018   # vertical spacing between bars
+
+bar_plot <- ggplot(
+  data = plot.data,
+  aes(x = condition, y = avg_knower_pref, fill = condition)
+) + 
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+  geom_hline(yintercept = 0.5, linetype = 2, col="red") +
+  geom_text(aes(x = 1, y = 0.61, label = "*"), col="red", size = 8) +
+  geom_text(aes(x = 2, y = 0.60, label = "*"), col="red", size = 8) +
+  geom_text(aes(x = 3, y = 0.62, label = "*"), col="red", size = 8) +
+  coord_cartesian(ylim = c(0.3, 0.68)) +
+  scale_fill_manual(values = my_cols) +
+  ylab("Average knower preference") +
+  theme_bw() +
+  # significance bars 
+  # 1 vs 4
+  geom_segment(aes(x = 1, xend = 4, y = y_base, yend = y_base)) +
+  annotate("text", x = 2.5, y = y_base + 0.002, label = "*", size = 8) +
+  # 2 vs 4
+  geom_segment(aes(x = 2, xend = 4, y = y_base + spacing, 
+                   yend = y_base + spacing)) +
+  annotate("text", x = 3, y = y_base + 0.02, label = "*", size = 8) +
+  # 3 vs 4
+  geom_segment(aes(x = 3, xend = 4, y = y_base + 2*spacing, 
+                   yend = y_base + 2*spacing)) +
+  annotate("text", x = 3.5, y = y_base + spacing + 0.02, 
+           label = "*", size = 8) +
+   theme(
+   axis.text = element_text(size = 11),
+    axis.title = element_text(size = 16)) 
+
+bar_plot
+```
+```{r}
+#save the barplot
+ggsave(bar_plot , filename = "plots_ms/barplot_all_sessions_all_dogs.png", width = 10, height = 6, scale = 0.7)
+```
+
+### Boxplot 
+```{r}
+boxplot<-ggplot(data=subj.data.cond %>% 
+        mutate(condition=fct_recode(condition, 
+                                "back turned" = "back_turned", 
+                                "looking away" = "looking_away"),
+                condition = fct_relevel(condition, "present")), 
+       aes(x = condition, y = prop_knower_pref, fill=condition)) +
+  geom_boxplot()  +
+  geom_jitter(shape=20, position=position_jitter(0.1), alpha=.3)+
+  geom_line(aes(group = dog_id), alpha=0.05, lty=1) +
+  ylim(c(0,1))+
+  ylab("Proportion knower preference")+
+  geom_hline(yintercept=0.5, lty=2, col="red")+
+  scale_fill_manual(values = my_cols) +
+  theme_classic()+
+   theme(
+    axis.text = element_text(size = 11),
+    axis.title = element_text(size = 16)
+  )
+boxplot
+```
+```{r}
+#save the boxplot
+ggsave(boxplot , filename = "plots_ms/boxplot_all_sessions_all_dogs.png", width = 10, height = 6, scale=0.8, dpi = 1200)
+```
+# Plot barplot and boxplot together
+
+```{r}
+library(patchwork)
+
+barplot_boxplot_plot <- (
+  bar_plot + boxplot +
+  plot_annotation(tag_levels = "A") &
+  theme(plot.tag = element_text(size = 18))
+) + plot_layout(widths = c(1, 1))
+
+barplot_boxplot_plot
+ggsave("./plots_ms/Fig_2_knower_preference.png", barplot_boxplot_plot, width = 12, height = 5, dpi = 1200)
+```
+### Icpt-only bin model 1) all experimental conditions (except control)
+```{r}
+#Subset the data to exclude guesser present
+exp.data<-xdata %>% 
+  filter(condition!="present")
+```
+
+```{r}
+# Run model
+icpt.mm1=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=exp.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm1) #overall, across all experimental conditions, dogs' prefer the knower
+# above chance level: 54% (p < .001)
+
+#transform logit scale values to probability values
+confint_icpt.mm1 <- confint(icpt.mm1, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(icpt.mm1)[1])
+confint_prob <- logit_to_prob(confint_icpt.mm1["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept, 3)))
+print(paste("95% CI for probability:", round(confint_prob, 3)))
+```
+### Icpt-only bin model 2) back turned
+```{r}
+#Subset the data to keep only guesser back turned
+bt.data<-xdata %>% 
+  filter(condition=="back_turned")
+```
+
+```{r}
+# Run model
+icpt.mm2=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=bt.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm2)
+#on average dogs performed significantly above chance level in the back turned condition: 59% (p<.001)
+
+#transform logit scale values to probability values
+confint_icpt.mm2 <- confint(icpt.mm2, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept2 <- logit_to_prob(fixef(icpt.mm2)[1])
+confint_prob2 <- logit_to_prob(confint_icpt.mm2["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept2, 3)))
+print(paste("95% CI for probability:", round(confint_prob2, 3)))
+```
+### Icpt-only bin model 3) absent
+```{r}
+#Subset the data to keep only guesser absent
+abs.data<-xdata %>% 
+  filter(condition=="absent")
+```
+
+ 
+```{r}
+# Run model
+icpt.mm3=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=abs.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm3)
+#dogs' performance significantly above chance in the abs condition (55%; p = .001)
+
+#transform logit scale values to probability values
+confint_icpt.mm3 <- confint(icpt.mm3, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept3 <- logit_to_prob(fixef(icpt.mm3)[1])
+confint_prob3 <- logit_to_prob(confint_icpt.mm3["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept3, 3)))
+print(paste("95% CI for probability:", round(confint_prob3, 3)))
+```
+### Icpt-only bin model 4) looking away
+```{r}
+#Subset the data to keep only guesser absent
+la.data<-xdata %>% 
+  filter(condition=="looking_away")
+```
+
+```{r}
+# Run model
+icpt.mm4=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=la.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm4)
+#dogs' performance not significantly different from chance in the looking away condition (49%)
+
+#transform logit scale values to probability values
+confint_icpt.mm4 <- confint(icpt.mm4, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept4 <- logit_to_prob(fixef(icpt.mm4)[1])
+confint_prob4 <- logit_to_prob(confint_icpt.mm4["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept4, 3)))
+print(paste("95% CI for probability:", round(confint_prob4, 3)))
+```
+
+### Icpt-only bin model 5) present
+```{r}
+#Subset the data to keep only guesser absent
+present.data<-xdata %>% 
+  filter(condition=="present")
+```
+
+```{r}
+# Run model
+icpt.mm5=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=present.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(icpt.mm5)
+#dogs significantly preferred the knower above chance level in the present condition (57%, p < .001)
+
+#transform logit scale values to probability values
+confint_icpt.mm5 <- confint(icpt.mm5, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept5 <- logit_to_prob(fixef(icpt.mm5)[1])
+confint_prob5 <- logit_to_prob(confint_icpt.mm5["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept5, 3)))
+print(paste("95% CI for probability:", round(confint_prob5, 3)))
+```
+
+# First trial only - session 1
+### Icpt-only bin mod 1ft) all experimental conditions (except control)
+```{r}
+#create trial within condition variable (to retain only 1st trial of first session)
+ft.data<-xdata %>% 
+  group_by(dog_id, condition) %>%
+  mutate(trial_within_cond = rank(trial, ties.method = "first")) %>%
+  ungroup() %>% 
+  filter(trial_within_cond==1)
+
+#to keep the 1st trial also of session 2 and 3
+ft.data.all.sessions<-xdata %>% 
+  arrange(dog_id, session, condition, trial) %>%   # ensure data ordered
+  group_by(dog_id, session, condition) %>%         # group by the factors
+  slice(1) %>%                                      # keep first row in each group
+  ungroup()
+
+
+#Subset the data to exclude guesser present
+ft.exp.data<-ft.data %>% 
+  filter(condition!="present")
+#check
+nrow(ft.exp.data)/3 #yes, this has 3 observations per dog (the first trial of each of the test conditions on the first session)
+
+ft.exp.data.all.sessions<-ft.data.all.sessions %>% 
+  filter(condition!="present")
+```
+
+ 
+```{r}
+# Run model (first trial of session 1 only)
+ft.icpt.mm1=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.exp.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm1) #overall, across all experimental conditions, dogs did not prefer the knower above chance level from the first trial of session 1 (Wald test of icpt p=0.209)
+
+#transform logit scale values to probability values
+confint_ft.icpt.mm1 <- confint(ft.icpt.mm1, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_ft.intercept <- logit_to_prob(fixef(ft.icpt.mm1)[1])
+confint_ft.prob <- logit_to_prob(confint_ft.icpt.mm1["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_ft.intercept, 3)))
+print(paste("95% CI for probability:", round(confint_ft.prob, 3)))
+```
+
+### Icpt-only bin mod 2ft) back turned 
+```{r}
+#Subset the data to keep only guesser back turned
+ft.bt.data<-ft.data %>% 
+  filter(condition=="back_turned")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm2=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.bt.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm2) #In the bt condition, dogs tended to prefer the knower slightly
+#above chance level from trial 1 (p=0.0676)
+
+#transform logit scale values to probability values
+confint_ft.icpt.mm2 <- confint(ft.icpt.mm2, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_ft.intercept2 <- logit_to_prob(fixef(ft.icpt.mm2)[1])
+confint_ft.prob2 <- logit_to_prob(confint_ft.icpt.mm2["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_ft.intercept2, 3)))
+print(paste("95% CI for probability:", round(confint_ft.prob2, 3)))
+```
+### Icpt-only bin mod 3ft) absent
+```{r}
+#Subset the data to keep only guesser absent
+ft.abs.data<-ft.data %>% 
+  filter(condition=="absent")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm3=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.abs.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm3)
+#dogs' performance not significantly different from chance in the first trial of the 
+#absent condition
+
+#transform logit scale values to probability values
+confint_ft.icpt.mm3 <- confint(ft.icpt.mm3, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_ft.intercept3 <- logit_to_prob(fixef(ft.icpt.mm3)[1])
+confint_ft.prob3 <- logit_to_prob(confint_ft.icpt.mm3["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_ft.intercept3, 3)))
+print(paste("95% CI for probability:", round(confint_ft.prob3, 3)))
+```
+### Icpt-only bin mod 4ft) looking away
+```{r}
+#Subset the data to keep only guesser absent
+ft.la.data<-ft.data %>% 
+  filter(condition=="looking_away")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm4=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.la.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#Warning: Model is nearly unidentifiable: large eigenvalue ratio
+ #- Rescale variables?
+#LL: due to large amount of 0s?
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm4)
+#dogs' performance not significantly different from chance in the first trial of
+# the looking away condition
+
+#transform logit scale values to probability values
+confint_ft.icpt.mm4 <- confint(ft.icpt.mm4, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_ft.intercept4 <- logit_to_prob(fixef(ft.icpt.mm4)[1])
+confint_ft.prob4 <- logit_to_prob(confint_ft.icpt.mm4["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_ft.intercept4, 3)))
+print(paste("95% CI for probability:", round(confint_ft.prob4, 3)))
+```
+# First trial - all sessions
+```{r}
+# Run model 
+ft.icpt.mm1.all.sessions=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.exp.data.all.sessions, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm1.all.sessions) #overall, across all experimental conditions and sessions, dogs preferred the knower above chance level, 55%, from the first trial (Wald test of icpt p=0.017)
+
+#transform logit scale values to probability values
+confint_icpt.mm1.all.sessions <- confint(ft.icpt.mm1.all.sessions, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept.all.sessions <- logit_to_prob(fixef(ft.icpt.mm1.all.sessions)[1])
+confint_prob.all.sessions <- logit_to_prob(confint_icpt.mm1.all.sessions["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept.all.sessions, 3)))
+print(paste("95% CI for probability:", round(confint_prob.all.sessions, 3)))
+```
+
+### Icpt-only bin mod 2ft) back turned
+```{r}
+#Subset the data to keep only guesser back turned
+ft.bt.data.all.sessions<-ft.data.all.sessions %>% 
+  filter(condition=="back_turned")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm2.all.sessions=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.bt.data.all.sessions, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm2.all.sessions) #In the bt condition, dogs preferred the knower above chance level, 65%, from trial 1 when including all sessions (p=0.002)
+
+#LL: to be adapted
+#transform logit scale values to probability values
+confint_icpt.mm2.all.sessions <- confint(ft.icpt.mm2.all.sessions, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept2.all.sessions <- logit_to_prob(fixef(ft.icpt.mm2.all.sessions)[1])
+confint_prob2.all.sessions <- logit_to_prob(confint_icpt.mm2.all.sessions["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept2.all.sessions, 3)))
+print(paste("95% CI for probability:", round(confint_prob2.all.sessions, 3)))
+```
+### Icpt-only bin mod 3ft) absent
+```{r}
+#Subset the data to keep only guesser absent
+ft.abs.data.all.sessions<-ft.data.all.sessions %>% 
+  filter(condition=="absent")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm3.all.sessions=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.abs.data.all.sessions, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm3.all.sessions)
+#dogs' performance not significantly different from chance (55%) in the first trial of the 
+#absent condition (p = .07)
+
+#transform logit scale values to probability values
+confint_icpt.mm3.all.sessions <- confint(ft.icpt.mm3.all.sessions, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept3.all.sessions <- logit_to_prob(fixef(ft.icpt.mm3.all.sessions)[1])
+confint_prob3.all.sessions <- logit_to_prob(confint_icpt.mm3.all.sessions["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept3, 3)))
+print(paste("95% CI for probability:", round(confint_prob3, 3)))
+```
+### Icpt-only bin mod 4ft) looking away
+```{r}
+#Subset the data to keep only guesser absent
+ft.la.data.all.sessions<-ft.data.all.sessions %>% 
+  filter(condition=="looking_away")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm4.all.sessions=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.la.data.all.sessions, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm4.all.sessions)
+#dogs' performance not significantly different from chance (44%) in the first trial of
+# the looking away condition including all sessions (p = .25)
+
+#transform logit scale values to probability values
+confint_icpt.mm4.all.sessions <- confint(ft.icpt.mm4.all.sessions, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept4.all.sessions <- logit_to_prob(fixef(ft.icpt.mm4.all.sessions)[1])
+confint_prob4.all.sessions <- logit_to_prob(confint_icpt.mm4.all.sessions["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_intercept4.all.sessions, 3)))
+print(paste("95% CI for probability:", round(confint_prob4.all.sessions, 3)))
+```
+
+### GLMM 01 - difference between conditions
+```{r}
+model.data <- xdata %>%
+  mutate(condition = fct_recode(condition, 
+                                "back turned" = "back_turned", 
+                                "looking away" = "looking_away")) %>%
+  mutate(condition = fct_relevel(condition, "present")) %>%  # Set "present" as reference
+  mutate(z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         z.session=as.vector(scale(session, center = TRUE, scale=TRUE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[4]), center=TRUE, scale= FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)))
+
+
+levels(as.factor(model.data$condition)) 
+
+```
+
+```{r}
+#Run the model
+mm1_choice=glmer(choice_binary ~ condition + z.age + z.trial + z.session +
+                (1+ condition.abs.c + condition.bt.c + condition.la.c + z.trial + z.session | dog_id),
+             data=model.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+round(summary(mm1_choice)$coefficients,2)
+summary(mm1_choice)$varcor
+
+round(drop1(mm1_choice, test="Chisq"),3)
+
+#P values of likelihood ratio tests
+mm1_choice_drop1 <- round(drop1(mm1_choice, test="Chisq"),3) %>% 
+  filter(!is.na(npar)) %>% 
+  add_row(npar = rep(NA,3),  .before = 1) #add columns for output table
+mm1_choice_drop1
+```
+#Pairwise comparisons between conditions
+```{r}
+library(emmeans)
+emm <- emmeans(mm1_choice, ~ condition) # Computes the marginal means of the response for each level of condition, adjusting for the random effects and other model terms
+pairs(emm)
+# looking away is significantly different from all other 3 conditions (including present) and the present condition is not significantly different from the bt and abs conditions
+```
+# Model assumptions and checks
+
+```{r}
+# Check for collinearity
+library(car)
+xx=lm(choice_binary ~ condition+z.trial+z.session+z.age, data=model.data)
+vif(xx)
+```
+#### confidence intervals 
+```{r}
+mm1_choice.ci=boot.glmm.pred(model.res=mm1_choice, excl.warnings=F,
+nboots=1000, para=T, n.cores="all-1", resol=1000, level=0.95)
+
+round(mm1_choice.ci$ci.estimates,2)
+```
+
+#### model stability
+```{r}
+m.stab.c <- glmm.model.stab(model.res = mm1_choice)
+m.stab.c$detailed$warnings
+as.data.frame(round(m.stab.c$summary[1:4, -1], 2))
+
+m.stab.plot(round(m.stab.c$summary[, -1], 2))
+```
+
+
+#### output table - choice
+
+```{r}
+mm1_choice_output_table <-
+  bind_cols(as.data.frame(summary(mm1_choice)$coeff),
+            mm1_choice_drop1,
+            mm1_choice.ci$ci.estimates,
+            m.stab.c$summary[1:7, -1]#,
+            #mm1_choice_aic_drop1_delta_df
+            ) %>%
+  dplyr::select(
+    Estimate,
+    SE = `Std. Error`,
+    Chi2 = LRT,
+    df = npar,
+    p = `Pr(Chi)`,
+    LowerCI = X2.5.,
+    UpperCI = X97.5.,
+    min,
+    max,
+    #delta_aic
+  ) %>% #
+  mutate(across(.cols = c(p), ~ format(round(.x, 3), nsmall = 3))) %>%
+  mutate(across(.cols = c(Estimate:df), ~ format(round(.x, 2), nsmall = 2))) %>%
+ mutate(across(.cols = c(LowerCI:max), ~ format(round(.x, 2), nsmall = 2))) %>%  #mutate(across(Chi2:p, ~replace_na(.x, "")))%>%
+  mutate(p = replace(p, p == 0, "<0.001"))
+
+write.csv(mm1_choice_output_table, file = "saves/mm1_choice_output_table_all_dogs_all_sessions.csv")
+```
+
+```{r}
+save.image("./workspace/guesser_knower_workspace_all_dogs_all_sessions.RData")
+```
+
+##Correlation across sessions, per condition
+```{r}
+#Average knower preference in each condition and session per dog
+cor_across_session_cond_incl_contr <- xdata %>%
+  group_by(dog_id, session, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = session, values_from = mean_choice,
+              names_prefix = "session_") #1 column per session
+
+#test conditions only
+cor_across_session_cond <- xdata %>%
+  group_by(dog_id, session, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = session, values_from = mean_choice,
+              names_prefix = "session_") %>%  #1 column per session
+  filter(condition!="present")
+
+cor_across_session_cond
+
+#binomial GLMM 
+glmm_corr_across_sessions <- glmer(choice_binary ~ session + (1 | dog_id),
+                    data = xdata,
+                    family = binomial(link = "logit"))
+summary(glmm_corr_across_sessions)#performance does not increase or decrease linearly with increasing session number
+
+#Pearson correlation coefficients
+cor(cor_across_session_cond$session_1, cor_across_session_cond$session_2, use = "pairwise.complete.obs", method = "pearson") #S1-S2 r=0.35
+cor(cor_across_session_cond$session_1, cor_across_session_cond$session_3, use = "pairwise.complete.obs", method = "pearson") #S1-S3 r=0.15
+cor(cor_across_session_cond$session_2, cor_across_session_cond$session_3, use = "pairwise.complete.obs", method = "pearson") #S2-S3 r=0.23
+
+#aggregate knower pref across conditions to have one value per dog_name and session
+cor_across_sessions_cond_agg<-cor_across_session_cond %>% 
+  group_by(dog_id) %>% 
+  summarise(mean_session_1=mean(session_1),
+            mean_session_2=mean(session_2),
+            mean_session_3=mean(session_3))
+
+session_cols_agg <- c("mean_session_1", "mean_session_2", "mean_session_3")
+pairs_test_retest <- combn(session_cols_agg, 2)  # names 
+
+cor_across_sessions_all_conds <- apply(pairs_test_retest, 2, \(p) {
+  a <-cor_across_sessions_cond_agg[[p[1]]]   # numeric vector
+  b <- cor_across_sessions_cond_agg[[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+cor_across_sessions_all_conds
+#when pooling all test conditions together, performance correlates significantly between S1-S2 but not between S2-S3 and S1-S3
+
+
+
+#Pearson correlation coefficients: Correlations based on all test conditions (excl. control)
+#Pairwise complete Person's correlation tests (i.e. only including rows in which both sessions have values)
+session_cols <- c("session_1", "session_2", "session_3")
+pairs <- combn(session_cols, 2) 
+#Within each condition separately (one average value per dog)
+# Absent
+cor_across_session_abs <- cor_across_session_cond %>% 
+  filter(condition=="absent")
+
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
+
+corr_across_sessions_abs <- apply(pairs, 2, \(p) {
+  a <- cor_across_session_abs[[p[1]]]   # numeric vector
+  b <- cor_across_session_abs[[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+corr_across_sessions_abs
+#in the absent condition, performance correlates significantly between S1-S2 and S2-S3 but only a trend for significance between S1-S3
+
+
+# Back turned
+cor_across_session_bt <- cor_across_session_cond %>% 
+  filter(condition=="back_turned")
+
+#Pairwise complete Person's correlation tests (i.e. only including rows in which both sessions have values)
+
+corr_across_sessions_bt  <- apply(pairs, 2, \(p) {
+  a <- cor_across_session_bt [[p[1]]]   # numeric vector
+  b <- cor_across_session_bt [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+corr_across_sessions_bt 
+#in the back turned condition, performance correlates significantly between S1-S2 but not between S2-S3 and S1-S3
+
+# Looking away
+cor_across_session_la <- cor_across_session_cond %>% 
+  filter(condition=="looking_away")
+
+#Pairwise complete Person's correlation tests (i.e. only including rows in which both sessions have values)
+
+corr_across_sessions_la  <- apply(pairs, 2, \(p) {
+  a <- cor_across_session_la [[p[1]]]   # numeric vector
+  b <- cor_across_session_la [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+corr_across_sessions_la 
+#in the looking away condition, performance correlates significantly between S1-S2, S1-S3 but not S2-S3
+```
+
+## Plot correlations in performance across sessions
+```{r}
+library(MASS)
+scores_wide <- xdata %>%
+  filter(condition!="present") %>% 
+  group_by(dog_name, condition, session) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = session, values_from = mean_score, names_prefix = "session_") %>%
+  filter(!is.na(session_1) & !is.na(session_2) & !is.na(session_3))  %>%
+  mutate(condition = str_replace_all(condition, "_", " "),
+         condition = str_to_title(condition))
+
+#Function to calculate density
+get_density <- function(x, y, dens){
+  ix <- findInterval(x, dens$x)
+  iy <- findInterval(y, dens$y)
+  mapply(function(i, j) ifelse(i > 0 & j > 0, dens$z[i,j], NA), ix, iy)
+}
+# Compute density with scores between 0 and 1
+#Pair 1: session_1 vs session_2
+dens12 <- with(scores_wide, kde2d(session_1, session_2, n = 100))
+scores_wide$density_12 <- get_density(scores_wide$session_1, scores_wide$session_2, dens12)
+
+#Pair 2: session_1 vs session_3
+dens13 <- with(scores_wide, kde2d(session_1, session_3, n = 100))
+scores_wide$density_13 <- get_density(scores_wide$session_1, scores_wide$session_3, dens13)
+
+#Pair 3: session_2 vs session_3
+dens23 <- with(scores_wide, kde2d(session_2, session_3, n = 100))
+scores_wide$density_23 <- get_density(scores_wide$session_2, scores_wide$session_3, dens23)
+
+```
+
+```{r}
+## Make a plot for each pair (all test conditions)
+library(scales)
+#session_1 vs session_2
+S1_S2_p<-ggplot(scores_wide, aes(x = session_1, y = session_2)) +
+  geom_point(aes(color = density_12, size = density_12)) +
+  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red", midpoint = 4) +
+  scale_size(range = c(1,5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  labs(x = "Knower choice session 1", y = "Knower choice session 2", color = "Number of dogs overlapping") +
+  ggtitle("S1 - S2") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold")) +
+  theme(plot.title = element_text(hjust = 0.5))
+S1_S2_p
+
+#session_1 vs session_3
+S1_S3_p <- ggplot(scores_wide, aes(x = session_1, y = session_3)) +
+  geom_point(aes(color = density_13, size = density_13)) +
+  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red", midpoint = 4) +
+  scale_size(range = c(1,5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  labs(x = "Knower choice session 1", y = "Knower choice session 3", color = "Number of dogs overlapping") +
+   ggtitle("S1 - S3") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold")) +
+  theme(plot.title = element_text(hjust = 0.5))
+S1_S3_p
+
+#session_2 vs session_3
+S2_S3_p <-ggplot(scores_wide, aes(x = session_2, y = session_3)) +
+  geom_point(aes(color = density_23, size = density_13)) +
+  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red", midpoint = 4) +
+  scale_size(range = c(1,5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  labs(x = "Knower choice session 2", y = "Knower choice session 3", color = "Number of dogs overlapping") +
+  ggtitle("S2 - S3") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold")) +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+S2_S3_p 
+```
+#Save the correlations across sessions plots
+```{r}
+#save the barplot
+ggsave(S1_S2_p, filename = "plots/density_plot_corr_S1_S2.png", width = 10, height = 6, scale = 0.8, bg = "white")
+
+ggsave(S1_S3_p, filename = "plots/density_plot_corr_S1_S3.png", width = 10, height = 6, scale = 0.8, bg = "white")
+
+ggsave(S2_S3_p, filename = "plots/density_plot_corr_S2_S3.png", width = 10, height = 6, scale = 0.8, bg = "white")
+```
+
+```{r}
+library(cowplot)
+test_retest_p <- 
+  plot_grid(
+  S1_S2_p, S1_S3_p, S2_S3_p, align = "v", 
+  labels = "AUTO", ncol = 1)
+
+test_retest_p
+```
+#Save test-retest plot
+  1
+```{r}
+ggsave(test_retest_p, filename = "plots_ms/density_plot_test_re-test_rel.png", width = 12, height = 15, scale = 0.6, bg = "white", dpi=1200) 
+```
+
+#Across conditions 
+```{r}
+#pool sessions together
+conditions_data <- xdata %>%
+  group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = condition, values_from = mean_choice)
+
+condition_cols <- c("absent", "back_turned", "looking_away", "present")
+pairs_cond <- combn(condition_cols, 2) 
+#Within each condition separately (one average value per dog)
+
+
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
+
+corr_across_conditions <- apply(pairs, 2, \(p) {
+  a <- conditions_data [[p[1]]]   # numeric vector
+  b <- conditions_data [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+corr_across_conditions
+#1 = abs vs back turned
+#2 = abs vs la
+#3 = abs vs pres trend for significance (p=.093)
+#4 = bt vs la
+#5 = bt vs pres
+#6 = la vs pres
+#all the others not significant
+```
+# Plot corr across conditions
+```{r}
+# conditions_data<-conditions_data %>% 
+#   rename("looking away"=looking_away) %>% 
+#   rename("back turned" =back_turned)
+
+pairs_of_conds <- tribble(
+  ~x,            ~y,
+  "absent",      "back turned",
+  "absent",      "looking away",
+  "absent",      "present",
+  "back turned", "looking away",
+  "back turned", "present",
+  "looking away","present"
+)
+
+
+make_corr_plot <- function(data, x, y) {
+  
+  ct <- cor.test(data[[x]], data[[y]])
+  r  <- round(ct$estimate, 3)
+  p  <- round(ct$p.value, 3)
+  
+  ggplot(data, aes(x = .data[[x]], y = .data[[y]])) +
+    geom_point(size = 2, alpha = .7) +
+    geom_smooth(method = "lm", se = FALSE) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+    annotate("text", x = 0.1, y = 0.9,
+             label = paste0("r = ", r, "\np = ", p),
+             hjust = 0, size = 4) +
+    scale_x_continuous(limits = c(0,1)) +
+    scale_y_continuous(limits = c(0,1)) +
+    labs(
+      title = paste(x, "vs", y),
+      x = paste("Knower preference in", x),
+      y = paste("Knower preference in", y)
+    ) +
+    theme_minimal(base_size = 14)
+}
+
+plots <- pmap(pairs_of_conds, ~ make_corr_plot(conditions_data, ..1, ..2))
+
+# Inspect
+plots[[1]]  # first plot
+# or arrange all 6:
+library(patchwork)
+corr_cond_plot<-(plots[[1]] + plots[[2]] + plots[[3]]) / (plots[[4]] + plots[[5]] + plots[[6]])
+```
+#Save plot corr across conditions
+```{r}
+ggsave(
+  filename = "plots/correlations_across_conditions.png",
+  plot = corr_cond_plot,
+  width = 18,
+  height = 12,
+  scale= .6,
+  dpi = 300
+)
+```
+
+
+corrplot(corr_matrix, method = "color",
+  type = "upper",
+  addCoef.col = "black", 
+  tl.col = "black",      
+  col = colorRampPalette(c("#2166AC", "#FFFFFF","#B2182B"))(200),  
+  number.cex = 0.8,  
+  tl.srt = 25)
+
+```{r}
+#LL:ignore from here
+#First session
+cor_across_condition_tot <- xdata %>%
+   filter (session == 1)  %>%
+  group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = condition, values_from = mean_choice)
+sub_conditions <- cor_across_condition_tot[, -1] %>%
+  dplyr::select(present, absent, back_turned, looking_away) %>%
+  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+  as.data.frame() 
+
+#correlations
+corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
+print(corr_matrix)
+
+#p_values
+p_matrix <- cor_pmat(sub_conditions)
+print(round(p_matrix, 4))
+
+colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
+rownames(corr_matrix) <- colnames(corr_matrix)
+
+```
+
+corrplot( corr_matrix, method = "color",
+  type = "upper",
+  addCoef.col = "black", 
+  tl.col = "black",      
+  col = colorRampPalette(c("#2166AC", "#FFFFFF","#B2182B"))(200),  
+  number.cex = 0.8,  
+  tl.srt = 25)
+
+```{r}
+#Second session
+cor_across_condition_tot <- xdata %>%
+  filter (session == 2)  %>%
+  group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = condition, values_from = mean_choice)
+sub_conditions <- cor_across_condition_tot[, -1] %>%
+  dplyr::select(present, absent, back_turned, looking_away) %>%
+  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+  as.data.frame() 
+
+#correlations
+corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
+print(corr_matrix)
+
+#p_values
+p_matrix <- cor_pmat(sub_conditions)
+print(round(p_matrix, 4))
+
+colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
+rownames(corr_matrix) <- colnames(corr_matrix)
+colnames(p_matrix) <- str_to_title(str_replace_all(colnames(p_matrix), "_", " "))
+rownames(p_matrix) <- colnames(p_matrix)
+
+```
+
+```{r}
+#Third session
+cor_across_condition_tot <- xdata %>%
+  filter (session == 3)  %>%
+  group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = condition, values_from = mean_choice)
+sub_conditions <- cor_across_condition_tot[, -1] %>%
+  dplyr::select(present, absent, back_turned, looking_away) %>%
+  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+  as.data.frame() 
+
+#correlations
+corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
+print(corr_matrix)
+
+#p_values
+p_matrix <- cor_pmat(sub_conditions)
+print(round(p_matrix, 4))
+
+colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
+rownames(corr_matrix) <- colnames(corr_matrix)
+colnames(p_matrix) <- str_to_title(str_replace_all(colnames(p_matrix), "_", " "))
+rownames(p_matrix) <- colnames(p_matrix)
+
+```
+
+
+corrplot( corr_matrix, method = "color",
+  type = "upper",
+  tl.col = "black",  
+  addCoef.col = "black", 
+  col = colorRampPalette(c("#2166AC", "#FFFFFF","#B2182B"))(200),  
+  number.cex = 0.8,  
+  tl.srt = 25) 
+  
+text(x=2.05, y=4.25, labels="*", col="black", cex=2)
+
+#LL: adapt also across sessions?
+#Split-half reliability - across conditions
+```{r}
+xdata$split_half <- ifelse(xdata$trial %% 2 == 0, "even", "odd")
+
+#Compute mean scores for odd and even trials per dog_name and condition (pooled across sessions)
+odd_even_summary <- xdata %>%
+  group_by(dog_name) %>%
+  #filter(n_distinct(session) == 3) %>%  # OLD: only on dogs who came at 2 sessions
+  ungroup() %>%
+  mutate(split_half = ifelse(trial %% 2 == 0, "even", "odd")) %>%
+  group_by(dog_name, condition, split_half) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = 'drop') %>%
+  pivot_wider(names_from = split_half, values_from = mean_score)
+
+split_half_all_cond_cols <- c("mean_odd", "mean_even")
+pairs_split_half_all_cond <- combn(split_half_all_cond_cols, 2) 
+#Within each condition separately (one average value per dog)
+
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
+odd_even_summary_all_conds <-odd_even_summary %>% 
+  group_by(condition) %>% 
+  summarise(mean_even=mean(even),
+            mean_odd=mean(odd))
+
+odd_even_summary_all_cond <- apply(pairs_split_half_all_cond, 2, \(p) {
+  a <- odd_even_summary_all_conds [[p[1]]]   # numeric vector
+  b <- odd_even_summary_all_conds [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+odd_even_summary_all_cond
+
+# Absent condition 
+split_half_cond_cols <- c("odd", "even")
+pairs_split_half_cond <- combn(split_half_cond_cols, 2) 
+
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
+odd_even_summary_cond_abs <-odd_even_summary %>% 
+  filter(condition=="absent")
+
+odd_even_summary_abs <- apply(pairs_split_half_cond, 2, \(p) {
+  a <- odd_even_summary_cond_abs [[p[1]]]   # numeric vector
+  b <- odd_even_summary_cond_abs [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+odd_even_summary_abs #no significant correlations between odd and even numbers in the absent condition
+
+# Back turned condition 
+
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
+odd_even_summary_cond_bt <-odd_even_summary %>% 
+  filter(condition=="back_turned")
+
+odd_even_summary_bt <- apply(pairs_split_half_cond, 2, \(p) {
+  a <- odd_even_summary_cond_bt [[p[1]]]   # numeric vector
+  b <- odd_even_summary_cond_bt [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+odd_even_summary_bt #the bt condition is more stable: performance in the odd and even numbers in the back turned condition correlate significantly (r=-0.28, p=0.007)
+
+# Looking away condition 
+
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
+odd_even_summary_cond_la <-odd_even_summary %>% 
+  filter(condition=="looking_away")
+
+odd_even_summary_la <- apply(pairs_split_half_cond, 2, \(p) {
+  a <- odd_even_summary_cond_la [[p[1]]]   # numeric vector
+  b <- odd_even_summary_cond_la [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+odd_even_summary_la #the la condition is stable: performance in the odd and even numbers in the looking away condition correlate significantly (r=-0.25, p=0.014)
+
+# Present condition 
+
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
+odd_even_summary_cond_pres <-odd_even_summary %>% 
+  filter(condition=="present")
+
+odd_even_summary_pres <- apply(pairs_split_half_cond, 2, \(p) {
+  a <- odd_even_summary_cond_pres [[p[1]]]   # numeric vector
+  b <- odd_even_summary_cond_pres [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+odd_even_summary_pres #the pres condition is stable too: performance in the odd and even numbers in the present condition correlate significantly (r=-0.25, p=0.015)
+
+
+
+
+#LL: OLD
+#Calculate Pearson correlation (split-half reliability) for each condition
+condition_cor <- odd_even_summary %>%
+  group_by(condition) %>%
+  summarise(split_half_r = cor(odd, even, use = "complete.obs"))
+
+#Also compute the correlation pooled across all conditions
+overall_split_half_r <- cor(odd_even_summary$odd, odd_even_summary$even, use = "complete.obs")
+
+# Spearman-Brown correction : To estimate the full-test reliability based on the split-half
+condition_cors <- condition_cor %>%
+  mutate(spearman_brown = (2 * split_half_r) / (1 + split_half_r))
+
+overall_spearman_brown <- (2 * overall_split_half_r) / (1 + overall_split_half_r)
+
+#Print everything 
+print(condition_cors)
+cat("Overall split-half reliability (r):", overall_split_half_r, "\n")
+cat("Spearman-Brown corrected reliability:", overall_spearman_brown, "\n")
+
+#Overall split-half reliability (r): -0.0837293 
+#Spearman-Brown corrected reliability: -0.1827611 
+```
+#Plot split-half reliabilty
+```{r}
+library(tidyverse)
+
+odd_even_summary <- odd_even_summary %>%
+  mutate(condition = str_replace_all(condition, "_", " "))
+
+# Create a summary tibble of r and p values per condition
+split_half_stats <- tibble(
+  condition = c("absent", "back turned", "looking away", "present"),
+  r = c(0.11, -0.28, -0.25, -0.25),  # from odd_even_summary_*[[1]]$estimate (cor)
+  p = c(0.278, 0.007, 0.014, 0.015)      # from odd_even_summary_*[[1]]$p.value
+)
+
+
+# Scatter plot of odd vs even trials per condition
+spl.half.p<-ggplot(odd_even_summary, aes(x = even, y = odd)) +
+  geom_point(alpha = 0.5, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "steelblue") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  facet_wrap(~condition) +
+  # add correlation annotations
+  geom_text(
+    data = split_half_stats,
+    aes(x = 0.05, y = 0.95, label = paste0("r = ", r, "\np = ", p)),
+    inherit.aes = FALSE,  # important so it uses the data from split_half_stats
+    hjust = 0,
+    vjust = 1,
+    size = 4
+  ) +
+  scale_x_continuous(limits = c(0,1)) +
+  scale_y_continuous(limits = c(0,1)) +
+  labs(
+    title = "Split-Half Reliability: Odd vs Even Trials per Condition (All Sessions)",
+    x = "Knower Preference - Even Trials",
+    y = "Knower Preference - Odd Trials"
+  ) +
+  theme_minimal(base_size = 14)
+spl.half.p
+```
+#Save split-half plot
+```{r}
+ggsave(
+  filename = "plots_ms/split_half_reliability.png",
+  plot = spl.half.p,
+  width = 18,
+  height = 12,
+  scale= .5,
+  dpi = 300,
+  bg="white"
+)
+```
+# Comparison with Catala
+```{r}
+### Plot comparison with (Catala et al., 2017)
+library(ggeffects)
+#create a table with our data and the one from (Catala et al., 2017)
+data.plot.overall <- xdata %>%
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials) %>% 
+  mutate(condition=fct_recode(condition, "Present" = "present",
+                   "Absent" = "absent","Back turned" = "back_turned",
+                   "Looking away" = "looking_away"),
+                condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% #put the condition in order
+  group_by(condition) %>% 
+  summarise(total_trials = sum(trials, na.rm = TRUE),
+    avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+    se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se)   # Upper 95% CI
+data.plot.vs.catala <- data.plot.overall
+data.plot.vs.catala$studies <- factor(c("us","us","us","us"))
+
+data.plot.vs.catala$bar_color <- my_cols 
+
+present_catala <- data.frame(
+      condition = "Present", avg_knower_pref = 0.5637,se = NA,
+      ci_lower = 0.495,ci_upper = 0.629,
+      studies = "catala",bar_color="#A77BB4",
+      total_trials = 374)
+absent_catala <- data.frame(
+      condition = "Absent", avg_knower_pref = 0.72375, se = NA,
+      ci_lower = 0.659, ci_upper = 0.787, 
+      studies = "catala", bar_color="#8FAFD1",
+      total_trials = 372)
+back_turned_catala <-data.frame(
+      condition = "Back turned", avg_knower_pref = NA, se = NA,
+      ci_lower = NA, ci_upper = NA,
+      studies = "catala", bar_color="#9BD7A8",
+      total_trials = 0)
+looking_away_catala <- data.frame(
+      condition = "Looking away", avg_knower_pref = 0.6175, se = NA,
+      ci_lower = 0.565, ci_upper = 0.669, 
+      studies = "catala", bar_color="#FFF5A5",
+      total_trials = 382)
+
+data.plot.vs.catala <- bind_rows(looking_away_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(back_turned_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(absent_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(present_catala,data.plot.vs.catala)
+
+data.plot.vs.catala$studies <- factor(data.plot.vs.catala$studies, levels = c("us", "catala")) #we put "us" and "catala" as factor
+data.plot.vs.catala$condition <- factor(data.plot.vs.catala$condition, 
+                levels = c("Present", "Absent", "Back turned", "Looking away")) 
+#we put the conditions name as factor
+data.plot.vs.catala$bar_id <-as.character(interaction(data.plot.vs.catala$condition, data.plot.vs.catala$studies))
+#We create a new variable giving the identity of each bar of our plot
+print (data.plot.vs.catala)
+
+
+bar_plot_vs_catala <- ggplot(data = data.plot.vs.catala, 
+  aes(x = condition, y = avg_knower_pref, fill = bar_id, group =studies)) + 
+  geom_bar(stat = "identity", position = position_dodge(width =0.9)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0.2, 
+                position = position_dodge(width = 0.9)) +
+  geom_text(aes(x = 0.78, y = 0.63, label = "*"), size = 8) +
+  geom_text(aes(x = 1.78, y = 0.63, label = "*"), size = 8) +
+  geom_text(aes(x = 2.23, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 2.77, y = 0.66, label = "*"), size = 8) +
+  geom_text(aes(x = 4.23, y = 0.7, label = "*"), size = 8) +
+  geom_text(aes(x = condition, y = 0.2, label = paste0("n=", total_trials)),
+            position = position_dodge(width = 0.9),
+            color = "black",size = 4, fontface = "bold")+
+  geom_hline(yintercept = 0.5, lty = 2) +
+  coord_cartesian(ylim = c(0.2, 0.8)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  ylab("Percentage of choice for the Knower") +
+  xlab ("Condition") +
+  scale_fill_manual( values = setNames(data.plot.vs.catala$bar_color, data.plot.vs.catala$bar_id))+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12))
+bar_plot_vs_catala
+#error bars show 95% CI in all cases
+#lighter version of each color is Catala et al. (2017) study
+```
+# Save Catala comparison plot
+```{r}
+#save the barplot
+ggsave(bar_plot_vs_catala, filename = "plots/barplot_all_sessions_all_dogs_comparison_with_Catala.png", width = 10, height = 6, scale = 0.7)
+```
+# Individual perfromance
+```{r}
+#extract p-values of binomial tests for all dogs, all sessions, only in the test conditions
+subj.data.test$pval.binom <- mapply(
+  function(k, n) binom.test(k, n)$p.value,
+  subj.data.test$knower_pref,
+  subj.data.test$trials
+)
+which(subj.data.test$pval.binom<.05)
+#apply FDR correction using the Benjamini–Hochberg method
+subj.data.test$pval.binom.fdr <- p.adjust(subj.data.test$pval.binom, method = "BH")
+which(subj.data.test$pval.binom.fdr<.05)
+ #after applying false discovery rate correction, none of the individual performances is significantly above chance level
+
+mean(subj.data.test$trials)
+```
+# Individual plots
+```{r}
+library(Hmisc)  # binconf
+library(stringr)
+library(RColorBrewer)
+
+# Compute per-dog, per-session, per-condition mean and CI from raw trial data
+ind.plot.data <- xdata %>%
+  group_by(dog_name, session, condition) %>%
+  summarise(
+    n_trials = n(),
+    n_success = sum(choice_binary),
+    knower_pref = mean(choice_binary),
+    .groups = "drop"
+  ) %>%
+  rowwise() %>%
+  mutate(
+    CI = binconf(n_success, n_trials, alpha = 0.05, method = "wilson"),
+    CI_lower = CI[,2],   # extract lower bound
+    CI_upper = CI[,3]    # extract upper bound
+  ) %>%
+  ungroup() %>%
+  mutate(
+    condition = str_to_title(str_replace_all(condition, "_", " ")),
+    condition = factor(condition, levels = unique(condition)),
+    session = as.factor(session)
+  )
+
+#plot
+# Session colors
+session_colors <- brewer.pal(3, "Dark2")
+names(session_colors) <- levels(ind.plot.data$session)
+
+# Create folder
+dir.create("./plots_ms/individual_plots", recursive = TRUE, showWarnings = FALSE)
+
+# Loop through dogs
+dogs <- unique(ind.plot.data$dog_name)
+
+for(dog in dogs){
+  tmp <- filter(ind.plot.data, dog_name == dog)
+  
+  p <- ggplot(tmp, aes(x = condition, y = knower_pref, color = session)) +
+    
+    # Error bars
+    geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2, size = 0.8) +
+    
+    # Points
+    geom_point(size = 3) +
+    
+    # Dashed lines connecting same session
+    geom_line(aes(group = session), linetype = "solid", size = 0.8) +
+    
+    # Chance line
+    geom_hline(yintercept = 0.5, linetype = "dashed", col="red") +
+    
+    # Color scale
+    scale_color_manual(values = session_colors) +
+    
+    labs(title = dog, x = "Condition", y = "Knower Preference", color = "Session") +
+    theme_minimal(base_size = 14)
+  
+  # Save
+  ggsave(filename = paste0("./plots_ms/individual_plots/", dog, ".png"),
+         plot = p, width = 6, height = 4, dpi = 300, bg="white")
+}
+
+```
+#Save idividual plots into figures
+```{r}
+#using patchwork
+library(patchwork)
+
+# Split dogs into groups of 12
+dogs <- unique(ind.plot.data$dog_name)
+dog_groups <- split(dogs, ceiling(seq_along(dogs)/12))
+
+# Plot dimensions for saving
+png_width <- 14   # inches
+png_height <- 18  # inches
+
+ncol <- 3
+nrow <- 4
+
+# Colors for sessions
+session_colors <- RColorBrewer::brewer.pal(3, "Dark2")
+names(session_colors) <- levels(ind.plot.data$session)
+
+# Loop over groups
+for(i in seq_along(dog_groups)){
+  group <- dog_groups[[i]]
+  
+  plot_list <- lapply(seq_along(group), function(idx){
+    dog <- group[idx]
+    tmp <- filter(ind.plot.data, dog_name == dog)
+    
+    p <- ggplot(tmp, aes(x = condition, y = knower_pref, color = session)) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2, size = 0.8) +
+  geom_point(size = 3) +
+  geom_line(aes(group = session), linetype = "solid", size = 0.8) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", col = "red") +
+  scale_color_manual(values = session_colors) +
+  labs(title = dog, x = "Condition", y = "Knower Preference", color = "Session") +
+  theme_minimal() +  # base theme applied first
+  theme(
+    axis.title = element_text(size = 17),
+    axis.text = element_text(size = 14),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.margin = unit(c(0.1, 0.05, 0.2, 0.05), "cm")
+  )
+
+    
+    # Only show legend for plots in the rightmost column
+    if(idx %% ncol != 0){
+      p <- p + theme(legend.position = "none")
+    }
+    
+    p
+  })
+  
+  # Combine plots into a grid with patchwork
+  # Each column has equal width; legend is only in the rightmost column
+  grid_plot <- wrap_plots(plot_list, ncol = ncol, nrow = nrow) +
+    plot_layout(widths = rep(1, ncol), heights = rep(1, nrow))
+  
+  # Save as PNG
+  ggsave(
+    filename = paste0("./plots_ms/individual_plots/group_", i, ".png"),
+    plot = grid_plot,
+    width = png_width,
+    height = png_height,
+    units = "in",
+    dpi = 300,
+    bg = "white"
+  )
+}
+```
+
+# Inter-observer reliability (choice - binary variable, repeated obs. per subj)
+```{r}
+#read in reliability scorings
+reliab.data<- read.csv("data/gk_reliability_session1.csv", header=T) %>% 
+  mutate(original_code_fct=as.factor(original_code),
+         recoding_FL_fct=as.factor(recoding_FL))
+
+str(reliab.data)
+unique(levels(as.factor(reliab.data$dog_name))) #31 dogs coded, 744 trials in total
+which(is.na(reliab.data$original_code)) #contains one NA, recoded as missing to calculate % agreement
+
+reliab.data$original_code[is.na(reliab.data$original_code)] <- "missing"
+
+#Calculate Percentage Agreement
+percentage_agreement <- sum(reliab.data$recoding_FL == reliab.data$original_code) / nrow(reliab.data) * 100
+percentage_agreement #99.46%
+
+library(tidyr)
+long.reliab.data <- pivot_longer(reliab.data, cols = c(recoding_FL, original_code),
+                          names_to = "rater", values_to = "rating")
+
+str(long.reliab.data)
+summary(long.reliab.data$rating)
+
+#binomial GLMM to test if the rater has an influence on the rating
+reliab.glmm <- glmer(rating ~ rater + (1 | dog_name), data = long.reliab.data,
+               family = binomial)
+
+round(summary(reliab.glmm)$coefficients,2)
+
+round(drop1(reliab.glmm, test="Chisq"),3)
+
+#fixed effect for rater not significant, not suggesting significant disagreement 
+#between coders
+```
+
+
