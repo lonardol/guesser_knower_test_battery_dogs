@@ -1380,7 +1380,122 @@ ggsave(
   bg="white"
 )
 ```
-# Comparison with Catala
+# Comparison with Catala (ms)
+```{r}
+
+
+### Plot comparison with (Catala et al., 2017)
+#library(ggeffects)
+library(dplyr)
+library(ggplot2)
+# library(scales)
+# library(forcats)
+#create a table with our data and the one from (Catala et al., 2017)
+data.plot.overall <- xdata %>%
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials) %>% 
+  mutate(condition=fct_recode(condition, "Present" = "present",
+                   "Absent" = "absent","Back turned" = "back_turned",
+                   "Looking away" = "looking_away"),
+                condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% #put the condition in order
+  group_by(condition) %>% 
+  summarise(total_trials = sum(trials, na.rm = TRUE),
+    avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+    se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se)   # Upper 95% CI
+data.plot.vs.catala <- data.plot.overall
+data.plot.vs.catala$studies <- factor(c("us","us","us","us"))
+
+data.plot.vs.catala$bar_color <- my_cols 
+
+present_catala <- data.frame(
+      condition = "Present", avg_knower_pref = 0.5637,se = NA,
+      ci_lower = 0.495,ci_upper = 0.629,
+      studies = "catala",bar_color="#E1D8A8", #"#C69C6D"
+      total_trials = 374)
+absent_catala <- data.frame(
+      condition = "Absent", avg_knower_pref = 0.72375, se = NA,
+      ci_lower = 0.659, ci_upper = 0.787, 
+      studies = "catala", bar_color="#C3B366", #"#996633"
+      total_trials = 372)
+back_turned_catala <-data.frame(
+      condition = "Back turned", avg_knower_pref = NA, se = NA,
+      ci_lower = NA, ci_upper = NA,
+      studies = "catala", bar_color="#1A8F87",
+      total_trials = 0)
+looking_away_catala <- data.frame(
+      condition = "Looking away", avg_knower_pref = 0.6175, se = NA,
+      ci_lower = 0.565, ci_upper = 0.669, 
+      studies = "catala", bar_color="#665001",#"#59341F"
+      total_trials = 382)
+
+data.plot.vs.catala <- bind_rows(looking_away_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(back_turned_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(absent_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(present_catala,data.plot.vs.catala)
+
+data.plot.vs.catala$studies <- factor(data.plot.vs.catala$studies, levels = c("us", "catala")) #we put "us" and "catala" as factor
+data.plot.vs.catala$condition <- factor(data.plot.vs.catala$condition, 
+                levels = c("Present", "Absent", "Back turned", "Looking away")) 
+#we put the conditions name as factor
+data.plot.vs.catala$bar_id <-as.character(interaction(data.plot.vs.catala$condition, data.plot.vs.catala$studies))
+#We create a new variable giving the identity of each bar of our plot
+data.plot.vs.catala$pattern <- ifelse(data.plot.vs.catala$studies == "catala", "stripe", "none")
+print (data.plot.vs.catala)
+
+
+### -----------------------------------------------------------
+### Build the bar plot
+### -----------------------------------------------------------
+bar_plot_vs_catala <- ggplot(data.plot.vs.catala, 
+            aes(x = condition, 
+                y = avg_knower_pref, 
+                fill = bar_id, 
+                group = studies)) +
+  geom_col(position = position_dodge(width = 0.9),
+           color = "black") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0.2, 
+                position = position_dodge(width = 0.9)) +
+  geom_text(aes(x = 0.78, y = 0.63, label = "*"), size = 8) +
+  geom_text(aes(x = 1.78, y = 0.63, label = "*"), size = 8) +
+  geom_text(aes(x = 2.23, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 2.77, y = 0.66, label = "*"), size = 8) +
+  geom_text(aes(x = 4.23, y = 0.7, label = "*"), size = 8) +
+  geom_text(aes(x = condition, y = 0.2, label = paste0("n=", total_trials)),
+            position = position_dodge(width = 0.9),
+            color = "black", size = 4, fontface = "bold") +
+  geom_hline(yintercept = 0.5, lty = 2) +
+  coord_cartesian(ylim = c(0.2, 0.8)) +
+  scale_fill_manual(values = setNames(data.plot.vs.catala$bar_color,
+                                      data.plot.vs.catala$bar_id)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  ylab("Percentage of choice for the Knower") +
+  xlab("Condition") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+
+
+
+bar_plot_vs_catala 
+#error bars show 95% CI in all cases
+#striped version of each color is Catala et al. (2017) study
+```
+# Save Catala comparison plot - ms
+```{r}
+#save the barplot
+ggsave(bar_plot_vs_catala, filename = "plots_ms/barplot_all_sessions_all_dogs_comparison_with_Catala.png", width = 10, height = 6, scale = 0.7)
+```
+
+
+# Comparison with Catala - presentation
 ```{r}
 ### Plot comparison with (Catala et al., 2017)
 library(ggeffects)
@@ -1631,6 +1746,189 @@ for(i in seq_along(dog_groups)){
 }
 ```
 
+# Side bias
+###Overall dogs
+```{r}
+#We should have the same probability of choice for the R or the L
+pref_LR <- table (xdata$choice_LR)
+number_of_choice = sum (pref_LR)
+test_pref_LR <- binom.test(pref_LR["L"], number_of_choice, p = 0.5)
+test_pref_LR                                
+
+prop.table(pref_LR)
+
+###dogs chosed significantly more the L than the R pointing (might be because we start by baiting from the left side ?)
+```
+
+###Individually (could also be a bias for the experimenter)
+```{r}
+#We are going to use a binomial test
+dog_pref_LR <- xdata %>%
+   filter(!is.na(choice_LR)) %>%
+  group_by(dog_name, session) %>%
+  summarise(n_trials = n(),
+    n_L = sum(choice_LR == "L"),
+    n_R = sum(choice_LR == "R"),
+    .groups = "drop") %>%
+  mutate(binom_test = purrr::pmap(list(n_L, n_trials), ~ binom.test(..1, ..2, p = 0.5)),
+    p_value = sapply(binom_test, function(x) x$p.value),
+    p_value = round(p_value, 3),
+    significant = p_value < 0.05,
+    preferred_side = case_when(significant & n_L > n_R ~ "L",significant & n_R > n_L ~ "R",TRUE ~ NA_character_))
+dog_pref_LR
+
+```
+
+##Does this influence our results ?
+###Correlation between that preference and the choice for the knower
+```{r}
+#We create a new variable with the rate of preference per dog and session and we will run a glmm model to see if the index of preference in one session has an impact on the result in the tested condition (so without "present", because the dog doesn't make a mistake even by chosing the guesser in this condition) in the same session
+
+#On both session, with the present condition
+##We create a Lateralization index that we scale and center
+pref.model.data <- xdata %>%
+  group_by(dog_name, session) %>%
+  mutate(
+    sum_L = sum(choice_LR == "L", na.rm = TRUE),
+    sum_R = sum(choice_LR == "R", na.rm = TRUE),
+    total_trial = sum_L + sum_R,
+    pref_index = abs((sum_R - sum_L) / total_trial)) %>%
+  ungroup() %>%
+   mutate(condition = fct_recode(condition,        
+                                "Present" = "present",
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away")) %>%
+  mutate(condition = fct_relevel(condition, "Present")) %>% 
+  mutate(z.pref=as.vector(scale(pref_index, center = TRUE, scale=TRUE)),
+         z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         sex.c=
+           as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         z.session=as.vector(scale(session, center = TRUE, scale=TRUE)),
+         as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[4]), center=TRUE, scale= FALSE)))
+
+##Run the model
+pref.model=glmer(choice_binary ~ condition+z.pref+z.age+z.trial+z.session+
+        (1 + condition.abs.c+condition.bt.c+condition.la.c+z.pref+z.trial+z.session |dog_id),
+         data=pref.model.data, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#See the results
+round(summary(pref.model)$coefficients,2)
+#We don't have a significant effect by the lateralization index on choice binary in the test conditions 
+
+#We remove every fixed effect one by one and compared it to the complete model with a Chi² test (likelihood ratio test) 
+drop.pref.model <- round(drop1(pref.model, test="Chisq"),4)
+
+aic_pref_model <- drop.pref.model[1, "AIC"] #AIC of the complet model
+aic_pref_model_drop <- drop.pref.model[, "AIC"][-1] #AIC of the reduced models
+delta_aic_pref_model <- c(round(aic_pref_model - aic_pref_model_drop, 2))  #ΔAIC between full and reduced model
+
+#We do a table to summary of all this results
+drop_results <- drop.pref.model
+drop_results$delta_AIC <- c(NA, delta_aic_pref_model) # add the column delta AIC
+drop_results
+
+#                      Estimate Std. Error z value Pr(>|z|)
+#(Intercept)               0.30       0.07    4.49     0.00
+#conditionAbsent          -0.20       0.09   -2.19     0.03
+#conditionBack turned      0.09       0.09    0.98     0.33
+#conditionLooking away    -0.31       0.10   -3.23     0.00
+#z.pref                   -0.09       0.04   -2.43     0.02
+#z.age                     0.02       0.04    0.60     0.55
+#z.trial                  -0.06       0.03   -1.66     0.10
+#z.session                 0.06       0.03    1.72     0.09
+
+
+#           npar    AIC     LRT Pr(Chi) delta_AIC
+#<none>         5948.0                          
+#condition    3 5964.3 22.3420  0.0001    -16.34
+#z.pref       1 5951.9  5.9091  0.0151     -3.91
+#z.age        1 5946.3  0.3639  0.5463      1.64
+#z.trial      1 5948.7  2.7443  0.0976     -0.74
+#z.session    1 5949.0  2.9671  0.0850     -0.97
+
+```
+
+```{r}
+#On both session, without the present condition
+##We create a Lateralization index that we scale and center
+pref.model.data <- xdata %>%
+  filter(condition!="present") %>%
+  droplevels() %>% 
+  group_by(dog_name, session) %>%
+  mutate(
+    sum_L = sum(choice_LR == "L", na.rm = TRUE),
+    sum_R = sum(choice_LR == "R", na.rm = TRUE),
+    total_trial = sum_L + sum_R,
+    pref_index = abs((sum_R - sum_L) / total_trial)) %>%
+  ungroup() %>%
+   mutate(condition = fct_recode(condition,        
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away")) %>%
+  mutate(z.pref=as.vector(scale(pref_index, center = TRUE, scale=TRUE)),
+         z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         sex.c=
+           as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         z.session=as.vector(scale(session, center = TRUE, scale=TRUE)),
+         as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[1]), center=TRUE, scale= FALSE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)))
+
+
+##Run the model
+pref.model=glmer(choice_binary ~ condition+z.pref+z.age+z.trial+z.session+
+        (1 + condition.abs.c+condition.bt.c+condition.la.c+z.pref+z.trial+z.session |dog_id),
+         data=pref.model.data, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#See the results
+round(summary(pref.model)$coefficients,2)
+#We don't have a significant effect by the lateralization index on choice binary in the test conditions 
+
+#We remove every fixed effect one by one and compared it to the complete model with a Chi² test (likelihood ratio test) 
+drop.pref.model <- round(drop1(pref.model, test="Chisq"),4)
+
+aic_pref_model <- drop.pref.model[1, "AIC"] #AIC of the complet model
+aic_pref_model_drop <- drop.pref.model[, "AIC"][-1] #AIC of the reduced models
+delta_aic_pref_model <- c(round(aic_pref_model - aic_pref_model_drop, 2))  #ΔAIC between full and reduced model
+
+#We do a table to summary of all this results
+drop_results <- drop.pref.model
+drop_results$delta_AIC <- c(NA, delta_aic_pref_model) # add the column delta AIC
+drop_results
+
+#                      Estimate Std. Error z value Pr(>|z|)
+#(Intercept)               0.10       0.07    1.42     0.16
+#conditionBack turned      0.29       0.09    3.22     0.00
+#conditionLooking away    -0.10       0.10   -1.01     0.31
+#z.pref                   -0.06       0.04   -1.40     0.16
+#z.age                     0.02       0.04    0.44     0.66
+#z.trial                  -0.06       0.04   -1.58     0.11
+#z.session                 0.04       0.04    1.20     0.23
+
+#          npar    AIC     LRT Pr(Chi) delta_AIC
+#<none>         4487.8                          
+#condition    2 4502.8 18.9922  0.0001    -14.99
+#z.pref       1 4487.8  1.9783  0.1596      0.02
+#z.age        1 4486.0  0.1934  0.6601      1.81
+#z.trial      1 4488.3  2.4860  0.1149     -0.49
+#z.session    1 4487.3  1.4414  0.2299      0.56
+
+```
 # Inter-observer reliability (choice - binary variable, repeated obs. per subj)
 ```{r}
 #read in reliability scorings
