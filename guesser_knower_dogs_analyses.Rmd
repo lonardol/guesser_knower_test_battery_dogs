@@ -79,33 +79,7 @@ sum(!is.na(session1$choice_binary)) #2224
 sum(!is.na(session2$choice_binary)) #2087
 sum(!is.na(session3$choice_binary)) #2015
 ```
-###Time between sessions #LL: remove and remove column test date from data file
-```{r}
-date_data <- xdata %>%
-  mutate(test_date = as.Date(test_date, format = "%d/%m/%Y")) %>%
-  group_by(dog_name, session) %>%
-  summarise(date_session = min(test_date), .groups = "drop") %>% #we keep only one line per session and per dog
-  pivot_wider(names_from = session, values_from = date_session, names_prefix = "session_")  %>% #for each dog we put the date of the sessions in different columns
-  mutate(delay_1_2 = as.numeric(session_2 - session_1),
-         delay_2_3 = as.numeric(session_3 - session_2),
-         delay_1_3 = as.numeric(session_3 - session_1))
-print(date_data)
 
-mean_delay_1_2 <- mean(date_data$delay_1_2, na.rm = TRUE)
-mean_delay_2_3 <- mean(date_data$delay_2_3, na.rm = TRUE)
-mean_delay_1_3 <- mean(date_data$delay_1_3, na.rm = TRUE)
-sd_delay_1_2 <- sd(date_data$delay_1_2, na.rm = TRUE)
-sd_delay_2_3 <- sd(date_data$delay_2_3, na.rm = TRUE)
-sd_delay_1_3 <- sd(date_data$delay_1_3, na.rm = TRUE)
-
-cat("Mean delay S1-S2 :", round(mean_delay_1_2, 2), "days\n")
-cat("Mean delay S2-S3:", round(mean_delay_2_3, 2), "days\n")
-cat("Mean delay S1-S3:", round(mean_delay_1_3, 2), "days\n")
-
-cat("Standard Deviation delay S1-S2:", round(sd_delay_1_2, 2), "days\n")
-cat("Standard Deviation delay S2-S3:", round(sd_delay_2_3, 2), "days\n")
-cat("Standard Deviation delay S1-S3:", round(sd_delay_1_3, 2), "days\n")
-```
 ###Descriptive stats
 ```{r}
 subj.data<- xdata %>% 
