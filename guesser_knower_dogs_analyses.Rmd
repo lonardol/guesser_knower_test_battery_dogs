@@ -7,7 +7,7 @@ output: html_document
 
 ### Load libraries and custom functions
 ```{r}
-rm(list=ls())
+#rm(list=c("mu"))
 library(tidyverse)
 library(ggplot2)
 library(lme4)
@@ -15,10 +15,15 @@ library(summarytools)
 library(car)
 library(lmerTest)
 library(forcats)
+#library(papaja)
+library(gghalves)
+library(patchwork)
+library(ggpubr)
+#library(sjPlot)
 source("functions/diagnostic_fcns.r")
 source("functions/glmm_stability.r")
 source("functions/boot_glmm.r")
-# load("./workspace/guesser_knower_workspace_all_dogs_all_sessions.RData")
+load("./workspace/guesser_knower_workspace_all_dogs_all_sessions.RData")
 ```
 
 
@@ -193,7 +198,7 @@ bar_plot
 ```
 ```{r}
 #save the barplot
-ggsave(bar_plot , filename = "plots_ms/barplot_all_sessions_all_dogs.png", width = 10, height = 6, scale = 0.7)
+ggsave(bar_plot , filename = "plots/barplot_all_sessions_all_dogs.png", width = 10, height = 6, scale = 0.7)
 ```
 
 ### Boxplot 
@@ -220,7 +225,7 @@ boxplot
 ```
 ```{r}
 #save the boxplot
-ggsave(boxplot , filename = "plots_ms/boxplot_all_sessions_all_dogs.png", width = 10, height = 6, scale=0.8, dpi = 1200)
+ggsave(boxplot , filename = "plots/boxplot_all_sessions_all_dogs.png", width = 10, height = 6, scale=0.8, dpi = 1200)
 ```
 # Plot barplot and boxplot together
 
@@ -234,7 +239,7 @@ barplot_boxplot_plot <- (
 ) + plot_layout(widths = c(1, 1))
 
 barplot_boxplot_plot
-ggsave("./plots_ms/Fig_2_knower_preference.png", barplot_boxplot_plot, width = 12, height = 5, dpi = 1200)
+ggsave("./plots/Fig_2_knower_preference.png", barplot_boxplot_plot, width = 12, height = 5, dpi = 1200)
 ```
 ### Icpt-only bin model 1) all experimental conditions (except control)
 ```{r}
@@ -978,7 +983,7 @@ test_retest_p
 #Save test-retest plot
   1
 ```{r}
-ggsave(test_retest_p, filename = "plots_ms/density_plot_test_re-test_rel.png", width = 12, height = 15, scale = 0.6, bg = "white", dpi=1200) 
+ggsave(test_retest_p, filename = "plots/density_plot_test_re-test_rel.png", width = 12, height = 15, scale = 0.6, bg = "white", dpi=1200) 
 ```
 
 #Across conditions 
@@ -1180,128 +1185,73 @@ corrplot( corr_matrix, method = "color",
   
 text(x=2.05, y=4.25, labels="*", col="black", cex=2)
 
-#LL: adapt also across sessions?
-#Split-half reliability - across conditions
-```{r}
-xdata$split_half <- ifelse(xdata$trial %% 2 == 0, "even", "odd")
 
-#Compute mean scores for odd and even trials per dog_name and condition (pooled across sessions)
-odd_even_summary <- xdata %>%
-  group_by(dog_name) %>%
-  #filter(n_distinct(session) == 3) %>%  # OLD: only on dogs who came at 2 sessions
-  ungroup() %>%
+#Split-half reliability 
+```{r}
+# Overall (average across all conditions)
+#Compute mean scores for odd and even trials per dog_name (pooled across sessions)
+odd_even_summary.agg <- xdata %>%
   mutate(split_half = ifelse(trial %% 2 == 0, "even", "odd")) %>%
-  group_by(dog_name, condition, split_half) %>%
+  group_by(dog_name, split_half) %>%
   summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = 'drop') %>%
+  ungroup() %>%
   pivot_wider(names_from = split_half, values_from = mean_score)
 
-split_half_all_cond_cols <- c("mean_odd", "mean_even")
-pairs_split_half_all_cond <- combn(split_half_all_cond_cols, 2) 
-#Within each condition separately (one average value per dog)
+#Pearson correlation of odd vs even trial performance
+sh_cor <- cor.test(odd_even_summary.agg$odd, odd_even_summary.agg$even)
+sh_cor
 
-#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
-odd_even_summary_all_conds <-odd_even_summary %>% 
-  group_by(condition) %>% 
-  summarise(mean_even=mean(even),
-            mean_odd=mean(odd))
+# Within each condition separately
 
-odd_even_summary_all_cond <- apply(pairs_split_half_all_cond, 2, \(p) {
-  a <- odd_even_summary_all_conds [[p[1]]]   # numeric vector
-  b <- odd_even_summary_all_conds [[p[2]]]   # numeric vector
-  ok <- complete.cases(a, b)
-  cor.test(a[ok], b[ok], method = "pearson")
-})
+#present condition
+odd_even_summary.agg.present <- xdata %>%
+  filter(condition == "present") %>%  
+  mutate(split_half = ifelse(trial %% 2 == 0, "even", "odd")) %>%
+  group_by(dog_name, split_half) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = 'drop') %>%
+  ungroup() %>%
+  pivot_wider(names_from = split_half, values_from = mean_score)
 
-odd_even_summary_all_cond
+sh_cor_present <- cor.test(odd_even_summary.agg.present$odd, odd_even_summary.agg.present$even)
+sh_cor_present #(r=-0.25, p=0.015)
 
-# Absent condition 
-split_half_cond_cols <- c("odd", "even")
-pairs_split_half_cond <- combn(split_half_cond_cols, 2) 
+#absent condition
+odd_even_summary.agg.absent <- xdata %>%
+  filter(condition == "absent") %>%  
+  mutate(split_half = ifelse(trial %% 2 == 0, "even", "odd")) %>%
+  group_by(dog_name, split_half) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = 'drop') %>%
+  ungroup() %>%
+  pivot_wider(names_from = split_half, values_from = mean_score)
 
-#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
-odd_even_summary_cond_abs <-odd_even_summary %>% 
-  filter(condition=="absent")
+sh_cor_absent <- cor.test(odd_even_summary.agg.absent$odd, odd_even_summary.agg.absent$even)
+sh_cor_absent #(r=0.11, p=0.278)
 
-odd_even_summary_abs <- apply(pairs_split_half_cond, 2, \(p) {
-  a <- odd_even_summary_cond_abs [[p[1]]]   # numeric vector
-  b <- odd_even_summary_cond_abs [[p[2]]]   # numeric vector
-  ok <- complete.cases(a, b)
-  cor.test(a[ok], b[ok], method = "pearson")
-})
+#back turned condition
+odd_even_summary.agg.back.turned <- xdata %>%
+  filter(condition == "back_turned") %>%  
+  mutate(split_half = ifelse(trial %% 2 == 0, "even", "odd")) %>%
+  group_by(dog_name, split_half) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = 'drop') %>%
+  ungroup() %>%
+  pivot_wider(names_from = split_half, values_from = mean_score)
 
-odd_even_summary_abs #no significant correlations between odd and even numbers in the absent condition
+sh_cor_back.turned <- cor.test(odd_even_summary.agg.back.turned$odd, odd_even_summary.agg.back.turned$even)
+sh_cor_back.turned #(r=-0.28, p=0.007)
 
-# Back turned condition 
+#looking away condition
+odd_even_summary.agg.looking.away <- xdata %>%
+  filter(condition == "looking_away") %>%  
+  mutate(split_half = ifelse(trial %% 2 == 0, "even", "odd")) %>%
+  group_by(dog_name, split_half) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = 'drop') %>%
+  ungroup() %>%
+  pivot_wider(names_from = split_half, values_from = mean_score)
 
-#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
-odd_even_summary_cond_bt <-odd_even_summary %>% 
-  filter(condition=="back_turned")
-
-odd_even_summary_bt <- apply(pairs_split_half_cond, 2, \(p) {
-  a <- odd_even_summary_cond_bt [[p[1]]]   # numeric vector
-  b <- odd_even_summary_cond_bt [[p[2]]]   # numeric vector
-  ok <- complete.cases(a, b)
-  cor.test(a[ok], b[ok], method = "pearson")
-})
-
-odd_even_summary_bt #the bt condition is more stable: performance in the odd and even numbers in the back turned condition correlate significantly (r=-0.28, p=0.007)
-
-# Looking away condition 
-
-#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
-odd_even_summary_cond_la <-odd_even_summary %>% 
-  filter(condition=="looking_away")
-
-odd_even_summary_la <- apply(pairs_split_half_cond, 2, \(p) {
-  a <- odd_even_summary_cond_la [[p[1]]]   # numeric vector
-  b <- odd_even_summary_cond_la [[p[2]]]   # numeric vector
-  ok <- complete.cases(a, b)
-  cor.test(a[ok], b[ok], method = "pearson")
-})
-
-odd_even_summary_la #the la condition is stable: performance in the odd and even numbers in the looking away condition correlate significantly (r=-0.25, p=0.014)
-
-# Present condition 
-
-#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
-odd_even_summary_cond_pres <-odd_even_summary %>% 
-  filter(condition=="present")
-
-odd_even_summary_pres <- apply(pairs_split_half_cond, 2, \(p) {
-  a <- odd_even_summary_cond_pres [[p[1]]]   # numeric vector
-  b <- odd_even_summary_cond_pres [[p[2]]]   # numeric vector
-  ok <- complete.cases(a, b)
-  cor.test(a[ok], b[ok], method = "pearson")
-})
-
-odd_even_summary_pres #the pres condition is stable too: performance in the odd and even numbers in the present condition correlate significantly (r=-0.25, p=0.015)
-
-
-
-
-#LL: OLD
-#Calculate Pearson correlation (split-half reliability) for each condition
-condition_cor <- odd_even_summary %>%
-  group_by(condition) %>%
-  summarise(split_half_r = cor(odd, even, use = "complete.obs"))
-
-#Also compute the correlation pooled across all conditions
-overall_split_half_r <- cor(odd_even_summary$odd, odd_even_summary$even, use = "complete.obs")
-
-# Spearman-Brown correction : To estimate the full-test reliability based on the split-half
-condition_cors <- condition_cor %>%
-  mutate(spearman_brown = (2 * split_half_r) / (1 + split_half_r))
-
-overall_spearman_brown <- (2 * overall_split_half_r) / (1 + overall_split_half_r)
-
-#Print everything 
-print(condition_cors)
-cat("Overall split-half reliability (r):", overall_split_half_r, "\n")
-cat("Spearman-Brown corrected reliability:", overall_spearman_brown, "\n")
-
-#Overall split-half reliability (r): -0.0837293 
-#Spearman-Brown corrected reliability: -0.1827611 
+sh_cor_looking.away <- cor.test(odd_even_summary.agg.looking.away$odd, odd_even_summary.agg.looking.away$even)
+sh_cor_looking.away #(r=-0.25, p=0.014)
 ```
+
 #Plot split-half reliabilty
 ```{r}
 library(tidyverse)
@@ -1345,7 +1295,7 @@ spl.half.p
 #Save split-half plot
 ```{r}
 ggsave(
-  filename = "plots_ms/split_half_reliability.png",
+  filename = "plots/split_half_reliability.png",
   plot = spl.half.p,
   width = 18,
   height = 12,
@@ -1465,106 +1415,10 @@ bar_plot_vs_catala
 # Save Catala comparison plot - ms
 ```{r}
 #save the barplot
-ggsave(bar_plot_vs_catala, filename = "plots_ms/barplot_all_sessions_all_dogs_comparison_with_Catala.png", width = 10, height = 6, scale = 0.7)
-```
-
-
-# Comparison with Catala - presentation
-```{r}
-### Plot comparison with (Catala et al., 2017)
-library(ggeffects)
-#create a table with our data and the one from (Catala et al., 2017)
-data.plot.overall <- xdata %>%
-  group_by(dog_id, condition) %>% 
-  summarise(knower_pref=sum(choice_binary),
-            trials=length(choice_binary),
-            prop_knower_pref=knower_pref/trials) %>% 
-  mutate(condition=fct_recode(condition, "Present" = "present",
-                   "Absent" = "absent","Back turned" = "back_turned",
-                   "Looking away" = "looking_away"),
-                condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% #put the condition in order
-  group_by(condition) %>% 
-  summarise(total_trials = sum(trials, na.rm = TRUE),
-    avg_knower_pref=mean(prop_knower_pref, na.rm=T),
-    se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
-    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
-    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se)   # Upper 95% CI
-data.plot.vs.catala <- data.plot.overall
-data.plot.vs.catala$studies <- factor(c("us","us","us","us"))
-
-data.plot.vs.catala$bar_color <- my_cols 
-
-present_catala <- data.frame(
-      condition = "Present", avg_knower_pref = 0.5637,se = NA,
-      ci_lower = 0.495,ci_upper = 0.629,
-      studies = "catala",bar_color="#A77BB4",
-      total_trials = 374)
-absent_catala <- data.frame(
-      condition = "Absent", avg_knower_pref = 0.72375, se = NA,
-      ci_lower = 0.659, ci_upper = 0.787, 
-      studies = "catala", bar_color="#8FAFD1",
-      total_trials = 372)
-back_turned_catala <-data.frame(
-      condition = "Back turned", avg_knower_pref = NA, se = NA,
-      ci_lower = NA, ci_upper = NA,
-      studies = "catala", bar_color="#9BD7A8",
-      total_trials = 0)
-looking_away_catala <- data.frame(
-      condition = "Looking away", avg_knower_pref = 0.6175, se = NA,
-      ci_lower = 0.565, ci_upper = 0.669, 
-      studies = "catala", bar_color="#FFF5A5",
-      total_trials = 382)
-
-data.plot.vs.catala <- bind_rows(looking_away_catala,data.plot.vs.catala)
-data.plot.vs.catala <- bind_rows(back_turned_catala,data.plot.vs.catala)
-data.plot.vs.catala <- bind_rows(absent_catala,data.plot.vs.catala)
-data.plot.vs.catala <- bind_rows(present_catala,data.plot.vs.catala)
-
-data.plot.vs.catala$studies <- factor(data.plot.vs.catala$studies, levels = c("us", "catala")) #we put "us" and "catala" as factor
-data.plot.vs.catala$condition <- factor(data.plot.vs.catala$condition, 
-                levels = c("Present", "Absent", "Back turned", "Looking away")) 
-#we put the conditions name as factor
-data.plot.vs.catala$bar_id <-as.character(interaction(data.plot.vs.catala$condition, data.plot.vs.catala$studies))
-#We create a new variable giving the identity of each bar of our plot
-print (data.plot.vs.catala)
-
-
-bar_plot_vs_catala <- ggplot(data = data.plot.vs.catala, 
-  aes(x = condition, y = avg_knower_pref, fill = bar_id, group =studies)) + 
-  geom_bar(stat = "identity", position = position_dodge(width =0.9)) +
-  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
-                width = 0.2, 
-                position = position_dodge(width = 0.9)) +
-  geom_text(aes(x = 0.78, y = 0.63, label = "*"), size = 8) +
-  geom_text(aes(x = 1.78, y = 0.63, label = "*"), size = 8) +
-  geom_text(aes(x = 2.23, y = 0.8, label = "*"), size = 8) +
-  geom_text(aes(x = 2.77, y = 0.66, label = "*"), size = 8) +
-  geom_text(aes(x = 4.23, y = 0.7, label = "*"), size = 8) +
-  geom_text(aes(x = condition, y = 0.2, label = paste0("n=", total_trials)),
-            position = position_dodge(width = 0.9),
-            color = "black",size = 4, fontface = "bold")+
-  geom_hline(yintercept = 0.5, lty = 2) +
-  coord_cartesian(ylim = c(0.2, 0.8)) +
-  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
-  ylab("Percentage of choice for the Knower") +
-  xlab ("Condition") +
-  scale_fill_manual( values = setNames(data.plot.vs.catala$bar_color, data.plot.vs.catala$bar_id))+
-  theme_bw()+
-  theme(legend.position = "none",
-    axis.title.x = element_text(size = 14),
-    axis.title.y = element_text(size = 14),
-    axis.text.x = element_text(size = 12),
-    axis.text.y = element_text(size = 12))
-bar_plot_vs_catala
-#error bars show 95% CI in all cases
-#lighter version of each color is Catala et al. (2017) study
-```
-# Save Catala comparison plot
-```{r}
-#save the barplot
 ggsave(bar_plot_vs_catala, filename = "plots/barplot_all_sessions_all_dogs_comparison_with_Catala.png", width = 10, height = 6, scale = 0.7)
 ```
-# Individual perfromance
+
+# Individual performance
 ```{r}
 #extract p-values of binomial tests for all dogs, all sessions, only in the test conditions
 subj.data.test$pval.binom <- mapply(
@@ -1573,10 +1427,10 @@ subj.data.test$pval.binom <- mapply(
   subj.data.test$trials
 )
 which(subj.data.test$pval.binom<.05)
-#apply FDR correction using the Benjamini–Hochberg method
+#apply FDR choice_binaryion using the Benjamini–Hochberg method
 subj.data.test$pval.binom.fdr <- p.adjust(subj.data.test$pval.binom, method = "BH")
 which(subj.data.test$pval.binom.fdr<.05)
- #after applying false discovery rate correction, none of the individual performances is significantly above chance level
+ #after applying false discovery rate choice_binaryion, none of the individual performances is significantly above chance level
 
 mean(subj.data.test$trials)
 ```
@@ -1614,7 +1468,7 @@ session_colors <- brewer.pal(3, "Dark2")
 names(session_colors) <- levels(ind.plot.data$session)
 
 # Create folder
-dir.create("./plots_ms/individual_plots", recursive = TRUE, showWarnings = FALSE)
+dir.create("./plots/individual_plots", recursive = TRUE, showWarnings = FALSE)
 
 # Loop through dogs
 dogs <- unique(ind.plot.data$dog_name)
@@ -1643,7 +1497,7 @@ for(dog in dogs){
     theme_minimal(base_size = 14)
   
   # Save
-  ggsave(filename = paste0("./plots_ms/individual_plots/", dog, ".png"),
+  ggsave(filename = paste0("./plots/individual_plots/", dog, ".png"),
          plot = p, width = 6, height = 4, dpi = 300, bg="white")
 }
 
@@ -1709,7 +1563,7 @@ for(i in seq_along(dog_groups)){
   
   # Save as PNG
   ggsave(
-    filename = paste0("./plots_ms/individual_plots/group_", i, ".png"),
+    filename = paste0("./plots/individual_plots/group_", i, ".png"),
     plot = grid_plot,
     width = png_width,
     height = png_height,
@@ -1726,7 +1580,7 @@ for(i in seq_along(dog_groups)){
 pref_LR <- table (xdata$choice_LR)
 number_of_choice = sum (pref_LR)
 
-#at the individual level (binomial tests, BH corrected p-values) - (could also be a bias for the experimenter)
+#at the individual level (binomial tests, BH choice_binaryed p-values) - (could also be a bias for the experimenter)
 side.bias.data<-xdata %>%
   mutate(choice_LR_binary=ifelse(choice_LR=="L",1,0)) %>% 
   group_by(dog_name) %>% 
@@ -1859,6 +1713,155 @@ sb_model_output_table <-
   mutate(p = replace(p, p == 0, "<0.001"))
 
 write.csv(sb_model_output_table, file = "saves/side_pref_model_output_table_all_dogs_all_sessions.csv")
+```
+# Win-stay/lose-shift and  Win-Shift/Lose-Stay strategies
+```{r include=FALSE}
+strategy_data <- xdata%>%
+  filter(condition!="present") %>% #present condition removed because in it dogs got rewarded even when choosing guesser
+  mutate(
+    previous_trial_correct = as.numeric(ifelse(
+      dog_name == lag(dog_name), lag(choice_binary), ""
+    )),
+    previous_trial_side = (ifelse(
+      dog_name == lag(dog_name), lag(choice_LR), ""
+    )),
+    win_stay_lose_shift = as.numeric(
+      ifelse(
+        previous_trial_correct == 1 & previous_trial_side == choice_LR,
+        1,
+        ifelse(
+          previous_trial_correct == 0 & previous_trial_side != choice_LR,
+          1,
+          ifelse(
+            previous_trial_correct == 1 &
+              previous_trial_side != choice_LR,
+            0,
+            ifelse(previous_trial_correct == 0 &
+                     previous_trial_side == choice_LR, 0, "")
+          )
+        )
+      )
+    ),
+    win_shift_lose_stay = as.numeric(
+      ifelse(
+        previous_trial_correct == 1 & previous_trial_side != choice_LR,
+        1,
+        ifelse(
+          previous_trial_correct == 0 & previous_trial_side == choice_LR,
+          1,
+          ifelse(
+            previous_trial_correct == 1 &
+              previous_trial_side == choice_LR,
+            0,
+            ifelse(previous_trial_correct == 0 &
+                     previous_trial_side != choice_LR, 0, "")
+          )
+        )
+      )
+    )
+  ) 
+```
+
+
+```{r  include=FALSE}
+strategy.data.agg <- strategy_data %>%
+  group_by(dog_name) %>%
+  summarise(
+    mean_choice_binary = mean(choice_binary, na.rm=T),
+    mean_win_stay_lose_shift = mean(win_stay_lose_shift, na.rm=T),
+    mean_win_shift_lose_stay = mean(win_shift_lose_stay, na.rm=T)
+  ) %>%
+  ungroup()
+```
+
+
+```{r include=FALSE}
+#Pearson correlation of choice_binary performance (choice of Knower) and win stay lose shift strategy
+win_stay_cor <- cor.test(strategy.data.agg$mean_choice_binary, strategy.data.agg$mean_win_stay_lose_shift)
+win_shift_cor <- cor.test(strategy.data.agg$mean_choice_binary, strategy.data.agg$mean_win_shift_lose_stay)
+```
+
+```{r  include=FALSE}
+tt_win_stay <-t.test(strategy.data.agg$mean_win_stay_lose_shift, mu=0.5)
+tt_win_shift <-t.test(strategy.data.agg$mean_win_shift_lose_stay, mu=0.5)
+```
+
+
+```{r include=FALSE, warning=FALSE, message=FALSE, win-stay-fig, fig.cap = "Plot of dogs' aggregated performance in all three test conditions as a function of a win-stay, lose-shift strategy. The bubbles represent the number of individuals at a given performance level. The red dashed line shows the linear regression line. The black dashed line shows the identity line.", fig.align = "center", out.width = "80%"}
+win_stay_plot<-ggplot(strategy.data.agg, aes(x = mean_win_stay_lose_shift, y = mean_choice_binary))+ 
+  geom_abline(intercept = 0, slope = 1, lty = 2, alpha = 0.7, size = 0.5)+
+  stat_cor(method = "pearson", aes(x = mean_win_stay_lose_shift, y = mean_choice_binary, label = paste(..r.label..)),cor.coef.name = "r", inherit.aes = F, size = 3)+
+  geom_count(alpha = .5) +
+  scale_size_continuous(labels = scales::label_number(accuracy = 1)) +
+  geom_smooth(method=lm, color="firebrick", alpha=0.5, lty=2,se=FALSE )+
+  labs (x = "mean win-stay, lose-shift", y = "mean knower preference")+
+  theme_bw()+
+  xlim(0,1)+ ylim(0,1)+
+  theme(legend.position = c(0.9, 0.25))
+win_stay_plot
+```
+
+```{r include=FALSE, warning=FALSE, message=FALSE, win-shift-fig, fig.cap = "Plot of dogs' aggregated performance in the Non-ostensive and Ostensive conditions as a function of a win-shift, lose-stay strategy. The bubbles represent the number of individuals at that performance level. The red dashed line shows the linear regression line. The black dashed line shows the identity line.", fig.align = "center", out.width = "80%"}
+win_shift_plot<-ggplot(strategy.data.agg, aes(x = mean_win_shift_lose_stay, y = mean_choice_binary))+ 
+  geom_abline(intercept = 0, slope = 1, lty = 2, alpha = 0.7, size = 0.5)+
+  stat_cor(method = "pearson", aes(x = mean_win_shift_lose_stay, y = mean_choice_binary, label = paste(..r.label..)),cor.coef.name = "r", inherit.aes = F, size = 3)+
+  geom_count(alpha = .5)+
+  scale_size_continuous(labels = scales::label_number(accuracy = 1)) +
+  geom_smooth(method=lm, color="firebrick", alpha=0.5, lty=2,se=FALSE )+
+  labs (x = "mean win-shift, lose-stay", y = "mean knower preference")+
+  theme_bw()+
+  xlim(0,1)+ ylim(0,1)+
+  theme(legend.position = c(0.9, 0.25))
+win_shift_plot
+```
+
+```{r include=FALSE}
+#win stay lose shift over trials
+strategy.data.agg2 <- strategy_data %>%
+  group_by(trial, condition) %>%
+  summarise(
+    mean_choice_binary = mean(choice_binary, na.rm=TRUE),
+    mean_win_stay_lose_shift = mean(win_stay_lose_shift, na.rm=TRUE),
+    mean_win_shift_lose_stay = mean(win_shift_lose_stay, na.rm=TRUE)
+  ) %>%
+  ungroup()
+
+ggplot(strategy.data.agg2, aes(x = trial, y = mean_win_stay_lose_shift, color=condition))+ 
+  geom_point(size=2)+
+    labs (x = "trial number", y = "mean win-shift lose-stay")+
+  theme_bw() +
+  ylim(0,1) +
+  geom_hline(yintercept = 0.5, lty=2)
+
+```
+
+
+```{r include=FALSE, warning=FALSE, message=FALSE, win-shift-hist, fig.cap = "Histogram of dogs' (A) win-stay, lose-shift and (B) win-shift, lose-stay strategies. The vertical line shows the chance level of 0.5.", fig.align = "center", out.width = "80%"}
+winshift_hist<-ggplot(strategy.data.agg, aes(x=mean_win_stay_lose_shift)) + 
+  geom_histogram(color="black", fill="darkgrey", binwidth = 1/14)+
+  theme_bw()+
+  xlab("mean win-stay, lose-shift")+
+  geom_vline(xintercept=0.5, lty=2)
+winstay_hist<-ggplot(strategy.data.agg, aes(x=mean_win_shift_lose_stay)) + 
+  geom_histogram(color="black", fill="darkgrey", binwidth = 1/14)+
+  theme_bw()+
+  xlab("mean win-shift, lose-stay")+
+  geom_vline(xintercept=0.5, lty=2)
+library(cowplot)
+plot_grid(winshift_hist, winstay_hist, labels = c("A", "B"))
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, strategy_plot, fig.cap = "The dogs' choice strategies in the Non-ostensive and Ostensive conditions as a function of (A) a win-stay, lose-shift strategy or (B) a win-shift, lose-stay strategy. The bubbles represent the number of individuals at that mean performance level. The red dashed line shows the linear regression line; the black dashed line shows the identity line. (C) and (D): Histogram of dogs' distribution according to the extent to which they performed in line with the (C) win-stay, lose-shift or (D) win-shift, lose-stay strategies. The vertical line shows the chance level of 0.5.", fig.align = "center", out.width = "80%", fig.width = 12, fig.height=10}
+library(cowplot)
+strategies.p<-plot_grid(win_stay_plot, win_shift_plot, winshift_hist, winstay_hist, labels=c("A", "B", "C", "D"))
+strategies.p
+```
+
+For each test trial (excluding the first trial in each condition block), we calculated whether the dogs' performance followed a win-stay, lose-shift or a win-shift, lose-stay strategy based on their performance in the previous trial. The win-stay, lose-shift strategy was negatively correlated with success (Pearson correlation: r(`r printnum(win_stay_cor$parameter)`) = `r printnum(win_stay_cor$estimate)`, p `r printp(win_stay_cor$p.value)`, Figure \ref{fig:strategy_plot}A) and conversely a win-shift, lose-stay strategy was positively correlated with success (r(`r printnum(win_shift_cor$parameter)`) = `r printnum(win_shift_cor$estimate)`, p `r printp(win_shift_cor$p.value)`, Figure \ref{fig:strategy_plot}B). These correlations are likely caused by the pseudo-randomization of the baited side (the food was presented no more than two trials in a row on the same side). At a group level, the dogs did not seem to engage in the win-stay, lose-shift (Mean = `r round(tt_win_stay$estimate, 2)`, 95% CI [`r round(tt_win_stay$conf.int[1],2)`, `r round(tt_win_stay$conf.int[2],2)`], *t*(`r tt_win_stay$parameter`)=`r round(tt_win_stay$statistic,2)`, *p*=`r printp(tt_win_stay$p.value)`; Figure \ref{fig:strategy_plot}C) or the win-shift, lose-stay strategy (Mean = `r round(tt_win_shift$estimate, 2)`, 95% CI [`r round(tt_win_shift$conf.int[1],2)`, `r round(tt_win_shift$conf.int[2],2)`], *t*(`r tt_win_shift$parameter`)=`r round(tt_win_shift$statistic,2)`, *p*=`r printp(tt_win_shift$p.value)`; Figure \ref{fig:strategy_plot}D) above chance levels (0.5). 
+
+# Save startegies plot
+```{r}
+ggsave(strategies.p, filename = "plots/win_stay_lose_shift_strategies.png", width = 10, height = 10, scale=0.8, bg = "white", dpi=1200) 
 ```
 
 # Inter-observer reliability (choice - binary variable, repeated obs. per subj)

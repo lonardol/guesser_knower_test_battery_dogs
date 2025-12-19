@@ -1,0 +1,4254 @@
+---
+title: "guesser_knower_battery"
+author: "Flore Luttmann"
+date: "2025-11-24"
+output: html_document
+---
+
+#Preliminaries
+### Load libraries and custom functions
+```{r}
+rm(list=ls())    #clean the workspace
+library(car)
+library(tidyverse) 
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(ggplot2)
+library(lme4)
+library(summarytools)
+library(emmeans)
+library(lmerTest)
+library(forcats)
+library(seqtest)
+library(corrplot)
+library(scales)
+library(patchwork)
+library(conflicted)
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
+conflict_prefer("lag", "dplyr")
+conflict_prefer("recode", "dplyr")
+source("functions/diagnostic_fcns.r")    
+source("functions/glmm_stability.r") 
+source("functions/boot_glmm.r") 
+```
+
+### Import data
+```{r}
+xdata <- read_delim(file.choose(), delim = ",", locale = locale(decimal_mark = "."))
+       #chose the data file you want to analyse
+
+#number of excluded trials
+sum(is.na(xdata$choice_binary)) #1
+#number of trials in 1st session
+sum(!is.na(xdata$choice_binary) & xdata$session == 1) #2224
+#number of trials in 2nd session
+sum(!is.na(xdata$choice_binary) & xdata$session == 2) #2087
+#number of trials in 3rd session
+sum(!is.na(xdata$choice_binary) & xdata$session == 3) #2015
+#number of no choice
+sum(xdata$no_choice == 1, na.rm = TRUE) #38
+#number of irrelevant choice
+sum(xdata$irrelevant_choice == 1, na.rm = TRUE) #164
+
+xdata <- xdata %>%
+  mutate(dog_id = as.factor(dog_id),
+           condition = as.factor(condition)) %>% 
+    filter(!is.na(choice_binary)) %>%  # Remove the excluded trials
+    droplevels()
+
+which(is.na(xdata$choice_binary)) #double check for NAs
+```
+
+###Inspect data
+```{r}
+str(xdata)
+length(unique(levels(xdata$dog_id))) #check if we have the right lenght of data
+```
+
+#Descriptive stats
+###Sample size
+```{r}
+#We use the fonction size.cor in seqtest (Yanagida,2016) with alpha=0,05 ; beta = 0,2 (80%power) ; minimum effect of interest = 0,3
+size.cor(delta = 0.3, 
+         alpha = 0.05, 
+         beta = 0.2, 
+         alternative = "two.sided")
+
+#Minimum sample size of 85 dogs
+```
+###Description of the data
+```{r}
+subj.data<- xdata %>% 
+  group_by(dog_id) %>% 
+  summarise(dog_name=dog_name[1],
+            sex=sex[1],
+            breed=breed[1], 
+            age=age[1],
+            counterbalancing_type=counterbalancing_type[1])
+
+table(subj.data$sex)   #number of male and female
+table(subj.data$breed) 
+summary(subj.data$age)  #age in months
+sd(subj.data$age[subj.data$sex == "m"])
+sd(subj.data$age[subj.data$sex == "f"])
+sum(xdata$session == 1)
+sum(xdata$session == 2)
+sum(xdata$session == 3)
+sum(xdata$condition == "looking_away" & xdata$session == 1)
+```
+
+```{r}
+#only dogs from the second session
+subj.data.2<- xdata %>% 
+  filter(session==2) %>% 
+  group_by(dog_id) %>% 
+  summarise(dog_name=dog_name[1],
+            sex=sex[1],
+            breed=breed[1], 
+            age=age[1],
+            counterbalancing_type=counterbalancing_type[1])
+
+table(subj.data.2$sex)   #number of male and female
+table(subj.data.2$breed) 
+summary(subj.data.2$age)  #age in months
+mean(subj.data.2$age[subj.data.2$sex == "m"])
+sd(subj.data.2$age[subj.data.2$sex == "m"])
+mean(subj.data.2$age[subj.data.2$sex == "f"])
+sd(subj.data.2$age[subj.data.2$sex == "f"])
+
+```
+
+```{r}
+#only dogs from the third session
+subj.data.3<- xdata %>% 
+  filter(session==3) %>% 
+  group_by(dog_id) %>% 
+  summarise(dog_name=dog_name[1],
+            sex=sex[1],
+            breed=breed[1], 
+            age=age[1],
+            counterbalancing_type=counterbalancing_type[1])
+
+table(subj.data.3$sex)   #number of male and female
+table(subj.data.3$breed) 
+summary(subj.data.3$age)  #age in months
+mean(subj.data.3$age[subj.data.3$sex == "m"]) #mean male age : 71.5 months
+sd(subj.data.3$age[subj.data.3$sex == "m"])
+mean(subj.data.3$age[subj.data.3$sex == "f"])
+sd(subj.data.3$age[subj.data.3$sex == "f"])
+```
+
+###Time between sessions
+```{r}
+#Between session 1 and 2
+date_data <- xdata %>%
+  mutate(test_date = as.Date(test_date, format = "%d/%m/%Y")) %>%
+  group_by(dog_name, session) %>%
+  summarise(date_session = min(test_date), .groups = "drop") %>% #we keep only one lign per session and per dog
+  pivot_wider(names_from = session, values_from = date_session, names_prefix = "session_")  %>% #for each dog we put the date of the sessions in different columns
+  mutate(delay_1 = as.numeric(session_2 - session_1)) %>%
+  mutate(delay_2 = as.numeric(session_3 - session_2))
+print(date_data)
+
+mean_delay_1 <- mean(date_data$delay_1, na.rm = TRUE)
+sd_delay_1 <- sd(date_data$delay_1, na.rm = TRUE)
+cat("Mean delay :", round(mean_delay_1, 2), "days\n")
+cat("Standard Deviation delay :", round(sd_delay_1, 2), "days\n")
+#Mean delay between S1-S2 : 89.29 days
+#Standard Deviation delay between S1-S2 : 11.38 days
+
+mean_delay_2 <- mean(date_data$delay_2, na.rm = TRUE)
+sd_delay_2 <- sd(date_data$delay_2, na.rm = TRUE)
+cat("Mean delay :", round(mean_delay_2, 2), "days\n")
+cat("Standard Deviation delay :", round(sd_delay_2, 2), "days\n")
+#Mean delay between S2-S3 : 139.74 days
+#Standard Deviation delay between S2-S3 : 22.99 days
+
+mean_delay <- mean(c(date_data$delay_1, date_data$delay_2), na.rm = TRUE)
+sd_delay <- sd(c(date_data$delay_1, date_data$delay_2), na.rm = TRUE)
+cat("Mean delay :", round(mean_delay, 2), "days\n")
+cat("Standard Deviation delay :", round(sd_delay, 2), "days\n")
+#Mean delay : 113.91 days
+#Standard Deviation delay : 31.02 days
+```
+
+
+###Significant difference of age between the male and the female ?
+```{r}
+#check the normality
+shapiro.test(subj.data$age[subj.data$sex == "m"])   #p>0,05 : normality ok
+shapiro.test(subj.data$age[subj.data$sex == "f"])   #p>0,05 : normality ok
+#check the variance homogeneity 
+leveneTest(age ~ sex, data = subj.data)  #p>0,05 : variances equal
+#We can use the Student test
+t.test(age ~ sex, data = subj.data)  #p=0,48 : no significant difference of age between the male and the female
+#average age female = 71 months
+#average age male = 67 months
+```
+
+###Significant difference of age between the 17 different tables ?
+```{r}
+#We have a maximum of 6 dogs for each counterbalanced type of table so we are going to use global non parametric test
+kruskal.test(age ~ counterbalancing_type, data = subj.data) #p=0,459 : no significant difference of age between the 17 different tables
+
+age_summary_table <- subj.data %>%
+  group_by(counterbalancing_type) %>%
+  summarise(
+    n = n(),
+    mean_age = round(mean(age, na.rm = TRUE), 1),
+    median_age = round(median(age, na.rm = TRUE), 1),
+    sd_age = round(sd(age, na.rm = TRUE), 1),
+    min_age = min(age, na.rm = TRUE),
+    max_age = max(age, na.rm = TRUE))%>%
+  arrange(counterbalancing_type)
+print(age_summary_table)
+
+```
+
+###Position of the experimenters
+```{r}
+#Do each experimenter have the same probability to appear at each position (left experimenter, right experimenter or hider) ?
+
+#We pivot the table
+data_long <- xdata %>%
+  select(dog_id, dog_name, session, experimenter_left_id,
+                experimenter_right_id, hider_id) %>%
+  distinct(dog_id, session, .keep_all = TRUE) %>%
+  pivot_longer(cols = c(experimenter_left_id, experimenter_right_id,
+                               hider_id), 
+                      names_to = "position", 
+                      values_to = "experimenter")
+
+# Number of test (dog × session)
+nb_test_uniq <- data_long %>%
+  distinct(dog_id, session) %>%
+  nrow()
+
+#Participation to the test per experimenter
+participation_per_exp <- data_long %>%
+  group_by(experimenter, dog_id, session) %>%
+  summarise(presence = 1, .groups = "drop") %>% # presence = 1 if experimenter present
+  group_by(experimenter) %>%
+  summarise(nb_test_participate = n()) %>%
+  mutate(pct_participation = 100 * nb_test_participate / nb_test_uniq)
+
+#We are going to do a Chi² test for each experimenter
+#We create a list of the experimenter
+experimenters <- unique(data_long$experimenter)
+#Loop of test
+for (exp in experimenters) {
+  # Number of time each experimenter occupy each position
+  pos_counts <- data_long %>%
+    filter(experimenter == exp) %>%
+    count(position) %>%
+    complete(position = c("experimenter_left_id", "experimenter_right_id", "hider_id"), fill = list(n = 0)) %>%
+    arrange(position)
+  total_expe_position <- sum(pos_counts$n)
+  # Pourcentage
+  pos_counts <- pos_counts %>%
+    mutate(percentage = round(100 * n / total_expe_position, 1))
+  # Global participation of each experimenter
+  pct_participation <- participation_per_exp %>%
+    filter(experimenter == exp) %>%
+    pull(pct_participation)
+  # Chi² test
+  chi_result <- chisq.test(pos_counts$n, p = rep(1/3, 3))
+  # Print the text
+  cat("\n====================================\n")
+  cat("EXPERIMENTATEUR :", exp, "\n")
+  cat("====================================\n")
+  cat("Chi² =", round(chi_result$statistic, 3),
+      ", df =", chi_result$parameter,
+      ", p-value =", round(chi_result$p.value, 4), "\n")
+  cat("Distribution positions :\n")
+  for (i in 1:nrow(pos_counts)) {
+    cat(sprintf("  %-6s : %2d fois (%4.1f%%)\n",
+                pos_counts$position[i],
+                pos_counts$n[i],
+                pos_counts$percentage[i]))}
+  cat(sprintf("Participation to all test : %.1f%%\n", pct_participation))}
+
+#Only HT was significantly more the hider than the other positions (p=0.0067)
+
+```
+
+#Preference for the knower
+##Individual level 
+###Summary
+```{r}
+binom_data_test <- xdata %>%
+  filter(condition!="present") %>%
+  group_by(dog_name) %>%
+  summarise(
+    successes = sum(choice_binary == 1, na.rm = TRUE),
+    trials = sum(!is.na(choice_binary)),
+    proportion_knower = successes / trials,
+    .groups = "drop")
+
+binom_results_test <- binom_data_test %>%
+  mutate(
+    binom_test = map2(
+      successes,
+      trials,
+      ~ binom.test(.x, .y, p = 0.5, alternative = "two.sided")),
+    p_value = map_dbl(binom_test, ~ .x$p.value)) %>%
+  mutate(p_value_fdr = p.adjust(p_value, method = "BH"))
+
+summary_test_conditions <- binom_results_test %>%
+  summarise(
+    N = n(),
+    N_significant = sum(p_value < 0.05),
+    N_significant_fdr = sum(p_value_fdr < 0.05),
+    mean_preference = mean(proportion_knower),
+    .groups = "drop")
+summary_test_conditions
+
+#9 dogs have significant results but 0 with de fdr correction
+```
+
+```{r}
+binom_data <- xdata %>%
+  group_by(dog_name, condition) %>%
+  summarise(
+    successes = sum(choice_binary == 1, na.rm = TRUE),
+    trials = sum(!is.na(choice_binary)),
+    proportion_knower = successes / trials,
+    .groups = "drop"  )
+
+binom_results <- binom_data %>%
+  mutate(
+    binom_test = map2(
+      successes,
+      trials,
+      ~ binom.test(.x, .y, p = 0.5, alternative = "two.sided")),
+    p_value = map_dbl(binom_test, ~ .x$p.value))
+
+binom_results <- binom_results %>%
+  group_by(condition) %>%
+  mutate(p_value_fdr = p.adjust(p_value, method = "BH")) %>%
+  ungroup()
+
+summary_table <- binom_results %>%
+  group_by(condition) %>%
+  summarise(
+    N = n(),
+    N_significant = sum(p_value<0.05),
+    N_significant_fdr = sum(p_value_fdr < 0.05),
+    mean_preference = mean(proportion_knower),
+    .groups = "drop")
+
+summary_table
+
+```
+###Overall all sessions
+```{r}
+#What are the proportion of preference for the knower in each condition for each dog overall all sessions
+
+#Overall, all conditions
+indiv_result_tot_overall <- xdata %>%
+  group_by (dog_id) %>%   #we don't take the number of the session into account
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials) %>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value,  #We extract the p-value from the test
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  # We indicate if the preference is above chance level
+  select(dog_id, dog_name, choice_knower_tot = knower_pref, trials_tot = trials, ratio_tot = prop_knower_pref, p_value, signif_result_tot_overall = significant)
+
+result_indiv_1_ov <- indiv_result_tot_overall %>% select (dog_id=dog_id,dog_name=dog_name, signif_result_tot_overall = signif_result_tot_overall)
+#Ganesh, Chilli7, Bo, Akira8, Nero3, Bookie, Arany, ascha, Nero4, Finley, Jabby, Paddy, Holly9, Preemo, Riu, Zita2, Mickey3
+
+```
+
+```{r}
+#Overall, only test condition
+indiv_result_test_overall <- xdata %>%
+  filter(condition!="present") %>% #remove the data from the present condition
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_test = knower_pref, trials_test = trials, ratio_test = prop_knower_pref, p_value, signif_result_test_overall = significant)
+
+result_indiv_2_ov <- indiv_result_test_overall %>% select (signif_result_test_overall = signif_result_test_overall)
+#Ganesh, Chilli5, Chilli5, Chilli7, Akira8, Nero3, Bookie, Arany, Poppy4, Finley, Ivy6, Jabby, Holly9,  Mickey3
+
+```
+
+```{r}
+#Overall, Present condition
+indiv_result_present_overall <- xdata %>%
+  filter(condition =="present") %>% #keep only the data from the present condition
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_present = knower_pref, trials_present = trials, ratio_present = prop_knower_pref, p_value, signif_result_present_overall = significant)
+
+result_indiv_3_ov <- indiv_result_present_overall %>% select (signif_result_present_overall = signif_result_present_overall)
+#Kala2, Aramis8, FrauleinFanny,Azzuro, Nero4, Molly8, Hugo4, Pepper5, Fleeti,Paddy, Preemo, Lucy20, Rovina, Riu, Mickey3
+```
+
+```{r}
+#Overall, Absent condition
+indiv_result_absent_overall <- xdata %>%
+  filter(condition =="absent") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_absent = knower_pref, trials_absent = trials, ratio_absent = prop_knower_pref, p_value, signif_result_absent_overall = significant)
+
+result_indiv_4_ov <- indiv_result_absent_overall %>% select (signif_result_absent_overall = signif_result_absent_overall)
+#Chilli5, Max5, Harvey, Henri, Chilli7, Bo, Akira8, Nero3, Jabby, Paddy, Holly9, Riu
+```
+
+```{r}
+#Overall, Back turned condition
+indiv_result_back_turned_overall <- xdata %>%
+  filter(condition =="back_turned") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_back_turned = knower_pref, trials_back_turned = trials, ratio_back_turned = prop_knower_pref, p_value, signif_result_back_turned_overall = significant)
+
+result_indiv_5_ov <- indiv_result_back_turned_overall %>% select (signif_result_back_turned_overall = signif_result_back_turned_overall)
+#Chilli7, Akira8, Jabby, Holly9, Poppy4, Lieserl, Asha, Pauli7, Dunni, Bookie, Mascha, Nero4, Finley
+```
+
+```{r}
+#Overall, Looking away condition
+indiv_result_looking_away_overall <- xdata %>%
+  filter(condition =="looking_away") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_looking_away = knower_pref, trials_looking_away = trials, ratio_looking_away = prop_knower_pref, p_value, signif_result_looking_away_overall = significant)
+
+result_indiv_6_ov <- indiv_result_looking_away_overall %>% select (signif_result_looking_away_overall = signif_result_looking_away_overall)
+#Finley, Silva, Brexit
+```
+
+```{r}
+#Summary of individual result, overall sessions
+result_indiv_overall_session <- bind_cols(result_indiv_1_ov,result_indiv_2_ov,result_indiv_3_ov,result_indiv_4_ov,result_indiv_5_ov,result_indiv_6_ov)
+print(result_indiv_overall_session)
+```
+
+```{r}
+#Plot with ligns following the results of the best dogs
+subj.data.cond<- xdata %>% 
+  filter (dog_name %in% c("Kala2", "Aramis8", "FrauleinFanny", "Hugo4", "Preemo", "Rovina", "Azzuro", "Molly8", "Pepper5", "Fleeti", "Lucy20", "Riu", "Mickey3", "Magic4", "Nero3", "Jabby", "Pauli7","Mascha","Nero4", "Holly9", "Chilli7", "Chilli5", "Max5","Harvey","Henri","Bo","Paddy", "Akira8", "Bookie", "Finley", "Poppy4", "Lieserl","Asha", "Dunni", "Brexit", "Silva")) %>% #change the names
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials,
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1])
+
+boxplot<-ggplot(data=subj.data.cond %>% 
+        mutate(condition=fct_recode(condition, 
+                                "Present" = "present", 
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away"),
+               condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")), 
+       aes(x = condition, y = prop_knower_pref, fill=condition)) +
+  geom_boxplot()  +
+  geom_jitter(shape=20, position=position_jitter(0.1), alpha=.5)+
+  geom_line(aes(group = dog_id, color = dog_id), alpha = 0.5, linewidth = 1) +
+  ylim(c(0,1))+
+  ylab("Proportion of preference fot the knower")+
+  theme_bw()+
+  theme(panel.grid = element_blank())+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),       
+    axis.text.x = element_text(size = 14))
+boxplot
+
+```
+
+###For the 1st session
+```{r}
+#What are the proportion of preference for the knower in each condition for each dog in the 1st session
+
+#First session, all conditions
+indiv_result_tot_1st <- xdata %>%
+  filter(session==1) %>% #we only take the results from the 1st session
+  group_by (dog_id) %>%   
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials) %>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value,  #We extract the p-value from the test
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  # We indicate if the preference is above chance level
+  select(dog_id, dog_name, choice_knower_tot = knower_pref, trials_tot = trials, ratio_tot = prop_knower_pref, p_value, signif_result_tot_1st = significant)
+
+#Yes for Ganesh (p=0,01 ; 18/24), Nero3 (p=0,03 ; 17/24), Bookie (p=0,01 ; 18/24), Finley (p=0,03 ; 17/24), Jabby (p=0,03 ; 17/24), Preemo (p=0,01 ; 18/24) ; Zita2 (p=0,02 ; 17/23) ; Mickey3 (p=0,0008 ; 20/24)
+
+result_indiv_1_1st <- indiv_result_tot_1st %>% select (dog_id=dog_id,dog_name=dog_name, signif_result_tot_1st = signif_result_tot_1st)
+```
+
+```{r}
+#First session, only test condition
+indiv_result_test_1st <- xdata %>%
+  filter(session==1) %>%
+  filter(condition!="present") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_test = knower_pref, trials_test = trials, ratio_test = prop_knower_pref, p_value, signif_result_test_1st = significant)
+
+#Yes for Ganesh (p=0,048 ; 13/18), Nero3 (p=0,048 ; 13/18) ; Bookie (p=0,04 ; 15/18), Finley (p=0,048 ; 13/18), Jabby (p=0,04 ; 15/18), Preemo (p=0,048 ; 13/18) ; Zita2 (p=0,02 ; 13/17) ; Mickey3 (p=0,01 ; 14/18)
+
+result_indiv_2_1st <- indiv_result_test_1st %>% select (signif_result_test_1st = signif_result_test_1st)
+```
+
+```{r}
+#First session, Present condition
+indiv_result_present_1st <- xdata %>%
+  filter(session==1) %>%
+  filter(condition =="present") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_present = knower_pref, trials_present = trials, ratio_present = prop_knower_pref, p_value, signif_result_present_1st = significant)
+
+#Yes for Mickey3 (p=0,01 ; 6/6)
+
+result_indiv_3_1st <- indiv_result_present_1st %>% select (signif_result_present_1st = signif_result_present_1st)
+```
+
+```{r}
+#First session, Absent condition
+indiv_result_absent_1st <- xdata %>%
+  filter(session==1) %>%
+  filter(condition =="absent") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_absent = knower_pref, trials_absent = trials, ratio_absent = prop_knower_pref, p_value, signif_result_absent_1st = significant)
+
+#Yes for Nero3 (p=0,01 ; 6/6), Jabby (p=0,01 ; 6/6), Preemo (p=0,01 ; 6/6)
+
+result_indiv_4_1st <- indiv_result_absent_1st %>% select (signif_result_absent_1st = signif_result_absent_1st)
+```
+
+```{r}
+#First session, Back turned condition
+indiv_result_back_turned_1st <- xdata %>%
+  filter(session==1) %>%
+  filter(condition =="back_turned") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_back_turned = knower_pref, trials_back_turned = trials, ratio_back_turned = prop_knower_pref, p_value, signif_result_back_turned_1st = significant)
+
+#Yes for Bookie (p=0,01 ; 6/6), Nero4 (p=0,01 ; 6/6), Woody2 (p=0,01 ; 6/6), 
+
+result_indiv_5_1st <- indiv_result_back_turned_1st %>% select (signif_result_back_turned_1st = signif_result_back_turned_1st)
+```
+
+```{r}
+#First session, Looking away condition
+indiv_result_looking_away_1st <- xdata %>%
+  filter(session==1) %>%
+  filter(condition =="looking_away") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_looking_away = knower_pref, trials_looking_away = trials, ratio_looking_away = prop_knower_pref, p_value, signif_result_looking_away_1st = significant)
+
+#Yes for no one
+
+result_indiv_6_1st <- indiv_result_looking_away_1st %>% select (signif_result_looking_away_1st = signif_result_looking_away_1st)
+```
+
+```{r}
+#Summary of individual results in the first session
+result_indiv_1st_session <- bind_cols(result_indiv_1_1st,result_indiv_2_1st,result_indiv_3_1st,result_indiv_4_1st,result_indiv_5_1st,result_indiv_6_1st)
+print(result_indiv_1st_session)
+
+#No impact of the age, the sex and the breed : 
+#Jabby (romagna_waterdog, f, 67 months) 
+#Nero3 (belgian_shepherd_dog_malinois, m, 18 months) 
+#Nero4 (staffordshire_bull_terrier, m, 44 months)
+#Bookie (maltese, 50 months)
+#Woody2 (irish_red_and_white_setter, m, 129 months)
+#Ganesh (mix, m, 90 months)
+#Preemo (romagna_waterdog, m, 51 months)
+#Finley (shetland_sheepdog_sheltie, m, 91 months)
+#Mickey3 (beagle, m, 121 months)
+#Zita2 (belgian_shepherd_dog_malinois,f,117 months)
+```
+
+###For the 2nd session
+```{r}
+#What are the proportion of preference for the knower in each condition for each dog in the 2nd session
+
+#Second session, all conditions
+indiv_result_tot_2nd <- xdata %>%
+  filter(session==2) %>% #we only take the results from the 2nd session
+  group_by (dog_id) %>%   
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials) %>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value,  #We extract the p-value from the test
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  # We indicate if the preference is above chance level
+  select(dog_id, dog_name, choice_knower_tot = knower_pref, trials_tot = trials, ratio_tot = prop_knower_pref, p_value, signif_result_tot_2nd = significant)
+
+result_indiv_1_2nd <- indiv_result_tot_2nd %>% select (dog_id=dog_id,dog_name=dog_name, signif_result_tot_2nd = signif_result_tot_2nd)
+```
+
+```{r}
+#Second session, only test condition
+indiv_result_test_2nd <- xdata %>%
+  filter(session==2) %>%
+  filter(condition!="present") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_test = knower_pref, trials_test = trials, ratio_test = prop_knower_pref, p_value, signif_result_test_2nd = significant)
+
+result_indiv_2_2nd <- indiv_result_test_2nd %>% select (signif_result_test_2nd = signif_result_test_2nd)
+#Chilli7, Akira8, Bookie, Arany, Asha, Magic4, Holly9, Riu
+```
+
+```{r}
+#Second session, Present condition
+indiv_result_present_2nd <- xdata %>%
+  filter(session==2) %>%
+  filter(condition =="present") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_present = knower_pref, trials_present = trials, ratio_present = prop_knower_pref, p_value, signif_result_present_2nd = significant)
+
+result_indiv_3_2nd <- indiv_result_present_2nd %>% select (signif_result_present_2nd = signif_result_present_2nd)
+#Azzuro, Paulinchen, Mooly8, Fleeti, Lucy20, Riu
+```
+
+```{r}
+#Second session, Absent condition
+indiv_result_absent_2nd <- xdata %>%
+  filter(session==2) %>%
+  filter(condition =="absent") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_absent = knower_pref, trials_absent = trials, ratio_absent = prop_knower_pref, p_value, signif_result_absent_2nd = significant)
+
+result_indiv_4_2nd <- indiv_result_absent_2nd %>% select (signif_result_absent_2nd = signif_result_absent_2nd)
+#Bo, Arany, Magic4,Holly9, Riu
+```
+
+```{r}
+#Second session, Back turned condition
+indiv_result_back_turned_2nd <- xdata %>%
+  filter(session==2) %>%
+  filter(condition =="back_turned") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_back_turned = knower_pref, trials_back_turned = trials, ratio_back_turned = prop_knower_pref, p_value, signif_result_back_turned_2nd = significant)
+
+result_indiv_5_2nd <- indiv_result_back_turned_2nd %>% select (signif_result_back_turned_2nd = signif_result_back_turned_2nd)
+#Akira8, Poppy4
+```
+
+```{r}
+#Second session, Looking away condition
+indiv_result_looking_away_2nd <- xdata %>%
+  filter(session==2) %>%
+  filter(condition =="looking_away") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_looking_away = knower_pref, trials_looking_away = trials, ratio_looking_away = prop_knower_pref, p_value, signif_result_looking_away_2nd = significant)
+
+result_indiv_6_2nd <- indiv_result_looking_away_2nd %>% select (signif_result_looking_away_2nd = signif_result_looking_away_2nd)
+#no dog
+```
+
+```{r}
+#Summary of individual results in the second session
+result_indiv_2nd_session <- bind_cols(result_indiv_1_2nd,result_indiv_2_2nd,result_indiv_3_2nd,result_indiv_4_2nd,result_indiv_5_2nd,result_indiv_6_2nd)
+print(result_indiv_2nd_session)
+```
+
+###For the 3rd session
+```{r}
+#What are the proportion of preference for the knower in each condition for each dog in the 3rd session
+
+#Third session, all conditions
+indiv_result_tot_3rd <- xdata %>%
+  filter(session==3) %>% #we only take the results from the 3rd session
+  group_by (dog_id) %>%   
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials) %>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value,  #We extract the p-value from the test
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  # We indicate if the preference is above chance level
+  select(dog_id, dog_name, choice_knower_tot = knower_pref, trials_tot = trials, ratio_tot = prop_knower_pref, p_value, signif_result_tot_3rd = significant)
+
+#Mascha, Molly8, Finley, Louie3
+
+result_indiv_1_3rd <- indiv_result_tot_3rd %>% select (dog_id=dog_id,dog_name=dog_name, signif_result_tot_3rd = signif_result_tot_3rd)
+```
+
+```{r}
+#Third session, only test condition
+indiv_result_test_3rd <- xdata %>%
+  filter(session==3) %>%
+  filter(condition!="present") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_test = knower_pref, trials_test = trials, ratio_test = prop_knower_pref, p_value, signif_result_test_3rd = significant)
+
+#Mascha, Finley, Max5, Ivy6
+
+result_indiv_2_3rd <- indiv_result_test_3rd %>% select (signif_result_test_3rd = signif_result_test_3rd)
+```
+
+```{r}
+#Third session, Present condition
+indiv_result_present_3rd <- xdata %>%
+  filter(session==3) %>%
+  filter(condition =="present") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_present = knower_pref, trials_present = trials, ratio_present = prop_knower_pref, p_value, signif_result_present_3rd = significant)
+
+#Louie3, Sammy11, Preemo
+
+result_indiv_3_3rd <- indiv_result_present_3rd %>% select (signif_result_present_3rd = signif_result_present_3rd)
+```
+
+```{r}
+#Third session, Absent condition
+indiv_result_absent_3rd <- xdata %>%
+  filter(session==3) %>%
+  filter(condition =="absent") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_absent = knower_pref, trials_absent = trials, ratio_absent = prop_knower_pref, p_value, signif_result_absent_3rd = significant)
+
+#Mascha, Max5, Ivy6, Chilli5, Holly9
+
+result_indiv_4_3rd <- indiv_result_absent_3rd %>% select (signif_result_absent_3rd = signif_result_absent_3rd)
+```
+
+```{r}
+#Third session, Back turned condition
+indiv_result_back_turned_3rd <- xdata %>%
+  filter(session==3) %>%
+  filter(condition =="back_turned") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_back_turned = knower_pref, trials_back_turned = trials, ratio_back_turned = prop_knower_pref, p_value, signif_result_back_turned_3rd = significant)
+
+#Apple2, Cora2, Lieserl
+
+result_indiv_5_3rd <- indiv_result_back_turned_3rd %>% select (signif_result_back_turned_3rd = signif_result_back_turned_3rd)
+```
+
+```{r}
+#Third session, Looking away condition
+indiv_result_looking_away_3rd <- xdata %>%
+  filter(session==3) %>%
+  filter(condition =="looking_away") %>%
+  group_by (dog_id) %>%
+  summarise(
+    dog_name = dog_name[1],
+    knower_pref=sum(choice_binary),
+    trials=length(choice_binary),
+    prop_knower_pref=knower_pref/trials)%>%
+  rowwise() %>% 
+  mutate(binom_test = list(binom.test(knower_pref, trials, p = 0.5, alternative = "greater")),
+    p_value = binom_test$p.value, 
+    significant = ifelse(p_value < 0.05, "Yes", "No")) %>%  
+  select(dog_id, dog_name, choice_knower_looking_away = knower_pref, trials_looking_away = trials, ratio_looking_away = prop_knower_pref, p_value, signif_result_looking_away_3rd = significant)
+
+#No one
+
+result_indiv_6_3rd <- indiv_result_looking_away_3rd %>% select (signif_result_looking_away_3rd = signif_result_looking_away_3rd)
+```
+
+```{r}
+#Summary of individual results in the third session
+result_indiv_3rd_session <- bind_cols(result_indiv_1_3rd,result_indiv_2_3rd,result_indiv_3_3rd,result_indiv_4_3rd,result_indiv_5_3rd,result_indiv_6_3rd)
+print(result_indiv_3rd_session)
+```
+
+###Graph with group and individual level(#not with result of the 3rd session)
+```{r}
+#Before doing that, you need to run  df_all in
+##Group level
+###Plot with result of each session + both
+selected_dogs <- c("Paulinchen","Riu", "Fleeti", "Pepper5","Amor2", "Nero3", "Jabby", "Woody2", "Dunni", "Finley", "Akira8", "Chilli7", "Brexit", "Silva", "Nero4", "Azzuro", "Arany", "Bo", "Poppy4", "Bookie", "Chilli5", "Magic4","Holly9","Mickey3", "Molly8","Lucy20","Preemo","Asha")  
+
+# 1. Prepare df_all with cond_sess 
+df_all <- df_all %>%
+  mutate(
+    y_pos_session = -0.05,
+    cond_sess = paste(condition, session, sep = "_"),
+    cond_sess = factor(cond_sess,
+                       levels = c(
+                         "Present_S1", "Present_S2", "Present_Both",
+                         "Absent_S1", "Absent_S2", "Absent_Both",
+                         "Back turned_S1", "Back turned_S2", "Back turned_Both",
+                         "Looking away_S1", "Looking away_S2", "Looking away_Both")),
+    session = factor(session, levels = c("S1", "S2", "Both")),
+    condition = factor(condition, levels = c("Present", "Absent", "Back turned", "Looking away")),
+    x_order = as.numeric(condition) + (as.numeric(session) - 1) * length(levels(condition)))
+
+# 2. Prepared data for each dogs
+# Per session
+highlight_dogs_session <- xdata %>%
+  filter(dog_name %in% selected_dogs) %>%
+  group_by(dog_name, session, condition) %>%
+  summarise(prop_choice = mean(choice_binary, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    condition = fct_recode(condition, 
+                           "Present" = "present", 
+                           "Absent" = "absent",
+                           "Back turned" = "back_turned", 
+                           "Looking away" = "looking_away"),
+    condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away"),
+    session = recode(as.character(session), "1" = "S1", "2" = "S2"),
+    session = factor(session, levels = c("S1", "S2")))
+
+# For both session
+highlight_dogs_both <- xdata %>%
+  filter(dog_name %in% selected_dogs) %>%
+  group_by(dog_name, condition) %>%
+  summarise(prop_choice = mean(choice_binary, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    session = "Both",
+    condition = fct_recode(condition, 
+                           "Present" = "present", 
+                           "Absent" = "absent",
+                           "Back turned" = "back_turned", 
+                           "Looking away" = "looking_away"),
+    condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away"),
+    session = factor(session, levels = c("S1", "S2", "Both")))
+
+# Fusion
+highlight_dogs_all <- bind_rows(highlight_dogs_session, highlight_dogs_both)
+
+# Now use levels defined before
+levels_cond_sess <- levels(df_all$cond_sess)
+
+highlight_dogs_all <- highlight_dogs_all %>%
+  mutate(
+    session = factor(session, levels = c("S1", "S2", "Both")),
+    condition = factor(condition, levels = c("Present", "Absent", "Back turned", "Looking away")))
+
+# 3. Prepare data of significance
+sig_dog_S1 <- result_indiv_1st_session %>%
+  filter(dog_name %in% selected_dogs) %>%
+  rename(
+    Present = `signif_result_present_1st`,    
+    Absent = `signif_result_absent_1st`,
+    `Back turned` = `signif_result_back_turned_1st`,
+    `Looking away` = `signif_result_looking_away_1st`)%>%
+  pivot_longer(
+    cols = c("Present", "Absent", "Back turned", "Looking away"),
+    names_to = "condition",
+    values_to = "significant") %>%
+  mutate(significant = significant == "Yes",session = "S1")
+
+sig_dog_S2 <- result_indiv_2nd_session %>%
+  filter(dog_name %in% selected_dogs) %>%
+   rename(
+    Present = `signif_result_present_2nd`,    
+    Absent = `signif_result_absent_2nd`,
+    `Back turned` = `signif_result_back_turned_2nd`,
+    `Looking away` = `signif_result_looking_away_2nd`)%>%
+  pivot_longer(
+    cols = c("Present", "Absent", "Back turned", "Looking away"),
+    names_to = "condition",
+    values_to = "significant") %>%
+  mutate(significant = significant == "Yes",session = "S2")
+
+sig_dog_both <- result_indiv_overall_session %>%
+  filter(dog_name %in% selected_dogs) %>%
+   rename(
+    Present = `signif_result_present_overall`,    
+    Absent = `signif_result_absent_overall`,
+    `Back turned` = `signif_result_back_turned_overall`,
+    `Looking away` = `signif_result_looking_away_overall`)%>%
+  pivot_longer(
+    cols = c("Present", "Absent", "Back turned", "Looking away"),
+    names_to = "condition",
+    values_to = "significant") %>%
+  mutate(significant = significant == "Yes",session = "Both")
+
+sig_all <- bind_rows(sig_dog_S1, sig_dog_S2, sig_dog_both)
+
+highlight_dogs_all <- highlight_dogs_all %>%
+  left_join(sig_all, by = c("dog_name", "condition", "session"))
+highlight_dogs_all <- highlight_dogs_all %>%
+  mutate(dog_name = factor(dog_name, levels = selected_dogs)) %>%
+  mutate(cond_sess = paste(condition, session, sep = "_"),
+         cond_sess = factor(cond_sess,
+                            levels = levels(df_all$cond_sess)))
+highlight_dogs_all <- highlight_dogs_all %>%
+  mutate(
+    cond_sess = factor(cond_sess, levels = levels(df_all$cond_sess)),
+    dog_name = factor(dog_name, levels = selected_dogs))
+
+#Dogs' label
+dog_info <- xdata %>%
+  filter(dog_name %in% selected_dogs) %>%
+  mutate(breed = ifelse(dog_name == "Azzuro", "hungarian_viszla", breed))%>%
+  mutate(breed = ifelse(dog_name == "Akira8", "old_german_shepherd", breed))%>%
+  mutate(breed = ifelse(dog_name == "Silva", "old_german_shepherd", breed))%>%
+  mutate(breed = ifelse(dog_name == "Molly8", "old_german_shepherd", breed))%>%
+  mutate(breed = ifelse(dog_name == "Finley", "shetland_sheepdog", breed))%>%
+  mutate(breed = ifelse(dog_name == "Nero3", "belgian_malinois", breed))%>%
+  mutate(breed = ifelse(dog_name == "Woody2", "irish_setter", breed))%>%
+  arrange(dog_name, session) %>%
+  group_by(dog_name) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(dog_name, age, breed, sex)
+
+highlight_dogs_all <- highlight_dogs_all %>%
+  select(-any_of(c("breed", "age","sex"))) %>% 
+  left_join(dog_info, by = "dog_name") %>%
+  mutate(
+    breed = str_replace_all(breed, "_", " "),
+    dog_label = paste0(dog_name, " : ", sex, ", ", age, " m, ", breed))
+
+##Forcing alignment
+# 1. Create x_num for each bar
+levels_order <- levels(df_all$cond_sess)
+highlight_dogs_all <- highlight_dogs_all %>%
+  mutate(x_num = as.numeric(factor(cond_sess, levels = levels_order)))
+
+# 2. Horizontal gap depending on the rank of the dog
+n_dogs <- length(selected_dogs)
+width_total <- 0.4  # gap between points 
+step <- width_total / (n_dogs + 1)
+
+highlight_dogs_all <- highlight_dogs_all %>%
+  mutate(
+    dog_rank = as.integer(factor(dog_name, levels = selected_dogs)),
+    x_plot = x_num - width_total/2 + dog_rank * step  )
+
+
+# 4. Colors and label
+my_colors <- c(
+  "Present_S1" = "darkolivegreen1",
+  "Absent_S1" = "lightblue",
+  "Back turned_S1" = "lightsalmon",
+  "Looking away_S1" = "plum2",
+  "Present_S2" = "darkolivegreen3",
+  "Absent_S2" = "cadetblue3",
+  "Back turned_S2" = "coral1",
+  "Looking away_S2" = "orchid3",
+  "Present_Both" = "darkolivegreen",
+  "Absent_Both" = "deepskyblue4",
+  "Back turned_Both" = "brown3",
+  "Looking away_Both" = "mediumorchid4")
+
+df_all$color <- my_colors[as.character(df_all$cond_sess)]
+
+condition_labels <- df_all %>%
+  group_by(condition) %>%
+  summarise(x = mean(as.numeric(cond_sess))) %>%
+  mutate(y = -0.1)
+
+# Define position dodge with a group (dog_name) 
+pos_dodge <- position_dodge2(width = 0.8, preserve = "single")
+
+plot_indiv <-ggplot(df_all, aes(x = cond_sess, y = prop_choice, fill = color)) +
+  geom_bar(stat = "identity", position = pos_dodge) +
+  scale_fill_identity() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                position = pos_dodge,
+                width = 0.2) +
+  geom_point(data = highlight_dogs_all,
+           aes(x = x_plot, y = prop_choice, color = dog_label),
+           size = 1.5, alpha = 0.8, inherit.aes = FALSE,show.legend = FALSE) +
+  geom_line(data = highlight_dogs_all,
+          aes(x = x_plot, y = prop_choice, color = dog_label, group = dog_label),
+          size = 0.2, alpha = 0.6, inherit.aes = FALSE, show.legend = FALSE) +
+  geom_text(data = highlight_dogs_all %>% filter(significant == TRUE),
+          aes(x = x_plot, y = prop_choice + 0.05, label = "*", color = dog_label),
+          size = 8.5, inherit.aes = FALSE, show.legend = FALSE)+
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  geom_text(aes(label = session, y = y_pos_session),
+            position = pos_dodge,
+            size = 5, color = "black") +
+  geom_text(data = condition_labels,
+            aes(x = x, y = y, label = condition),
+            inherit.aes = FALSE,
+            size = 10, color = "grey40") +
+  scale_x_discrete(labels = function(x) gsub("_", "\n", x)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(-0.15, 1.1)) +
+  labs(x = NULL, y = "Percentage of choice for the Knower", color = "Dog (sex, age, breed)") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "right",
+        axis.title.y = element_text(size = 20),
+        legend.key.size = unit(0.9, "cm"),
+        legend.text = element_text(size = 14),
+        legend.spacing.y = unit(1, "cm"),
+        legend.margin = margin(0.1,0.1, 0.1, 0.1))
+      
+```
+
+print(plot_indiv)
+
+##Group level
+###Overall all sessions
+```{r}
+#We are going to do intercept only binomial models (iobm)
+
+#Overall sessions, only test conditions
+test.data.overall<-xdata %>% 
+  filter(condition!="present") #we remove the control condition
+# Run the model
+iobm.overall.test=glmer(choice_binary ~ 1 + (1|dog_id), 
+      #~1 is the intercept, compares to the average of success overall dogs 
+      #no predictive variable, dog_id is set as a random variable, it means that each dogs can have a different number of success and we have multiple observations for each dog
+             data=test.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+      #"bobyqa" = optimizer, which is generally more robust and efficient
+      #optCtrl = increases the maximum number of function evaluations to 200,000 usefull if convergence is slow.
+
+confint_iobm.overall.test <- confint(iobm.overall.test, method = "Wald") #confidence intervalle
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit)) #fonction to go from OR to proba
+prob_intercept <- logit_to_prob(fixef(iobm.overall.test)[1]) #estimated probability
+confint_prob <- logit_to_prob(confint_iobm.overall.test["(Intercept)", ]) #intervalle of probability
+
+cat("Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.543 
+#95% Confidence intervalle of probability:  0.529 - 0.558 
+
+summary(iobm.overall.test)
+#p-value = 4.13e-09
+#z-value = 5.879
+#std error = 0.02956
+```
+
+```{r}
+#Overall sessions, Present condition
+present.data.overall<-xdata %>% 
+  filter(condition=="present") 
+iobm.overall.present=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=present.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.overall.present <- confint(iobm.overall.present, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.overall.present)[1])
+confint_prob <- logit_to_prob(confint_iobm.overall.present["(Intercept)", ]) 
+
+cat("Present Estimated probability:", round(prob_intercept, 3), "\n",
+    "Present 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.564
+#95% Confidence intervalle of probability :0.536 - 0.591 
+
+summary(iobm.overall.present)
+#p-value = 7.06e-06
+#z-value = 4.492
+#std error =  0.05701
+```
+
+```{r}
+#Overall sessions, Absent condition
+absent.data.overall<-xdata %>% 
+  filter(condition=="absent") 
+iobm.overall.absent=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=absent.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.overall.absent <- confint(iobm.overall.absent, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.overall.absent)[1])
+confint_prob <- logit_to_prob(confint_iobm.overall.absent["(Intercept)", ]) 
+
+cat("Absent Estimated probability:", round(prob_intercept, 3), "\n",
+    "Absent 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.552
+#95% Confidence intervalle of probability: 0.521 - 0.583 
+
+summary(iobm.overall.absent)
+#p-value =  0.000962
+#z-value = 3.301
+#std error =  0.06338
+```
+
+```{r}
+#Overall sessions, Back turned condition
+back.turned.data.overall<-xdata %>% 
+  filter(condition=="back_turned") 
+iobm.overall.back.turned=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=back.turned.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.overall.back.turned <- confint(iobm.overall.back.turned, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.overall.back.turned)[1])
+confint_prob <- logit_to_prob(confint_iobm.overall.back.turned["(Intercept)", ]) 
+
+cat("Back turned Estimated probability:", round(prob_intercept, 3), "\n",
+    "Back turned 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: : 0.585 
+#95% Confidence intervalle of probability:  0.561 - 0.609 
+
+summary(iobm.overall.back.turned)
+#p-value = 1.43e-11
+#z-value = 6.755
+#std error = 0.05103 
+```
+
+```{r}
+#Overall sessions, Looking away condition
+looking.away.data.overall<-xdata %>% 
+  filter(condition=="looking_away") 
+iobm.overall.looking.away=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=looking.away.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.overall.looking.away <- confint(iobm.overall.looking.away, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.overall.looking.away)[1])
+confint_prob <- logit_to_prob(confint_iobm.overall.looking.away["(Intercept)", ]) 
+
+cat("Looking away Estimated probability:", round(prob_intercept, 3), "\n",
+    "Looking away 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability:  0.493
+#95% Confidence intervalle of probability: 0.468 - 0.519 
+
+summary(iobm.overall.looking.away)
+#p-value =  0.619
+#z-value = -0.497 
+#std error =  0.05277   
+```
+
+```{r}
+#Overall sessions, plot for with all conditions
+data.plot.overall <- xdata %>%
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials) %>% 
+  mutate(condition=fct_recode(condition, "Present" = "present",
+                   "Absent" = "absent","Back turned" = "back_turned",
+                   "Looking away" = "looking_away"),
+                condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% #put the condition in order
+  group_by(condition) %>% 
+  summarise(total_trials = sum(trials, na.rm = TRUE),
+    avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+    se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se)   # Upper 95% CI
+
+bar_plot_overall<-ggplot(data=data.plot.overall,
+  aes(x=condition, y= avg_knower_pref, fill=condition)) + 
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +  #Error bars at 95% CI
+  geom_text(aes(x = 1, y = 0.69, label = "*"), size = 8) +  #p<0,05
+  geom_text(aes(x = 2, y = 0.69, label = "*"), size = 8) +
+  geom_text(aes(x = 3, y = 0.69, label = "*"), size = 8) +
+  geom_hline(yintercept = 0.5, lty=2) +
+  coord_cartesian(ylim = c(0.2, 0.7))+
+  ylab("Average preference for the knower")+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),       
+    axis.text.x = element_text(size = 14) )
+
+bar_plot_overall
+```
+
+###Boxplot overal session for each condition
+```{r}
+#Adapted from Sarah Verrart coding
+# Nb of times each dog chose the Knower per condition (sum of choice_binary)
+K_choice_count <- aggregate(choice_binary ~ dog_id + condition, data = xdata, FUN = sum, na.rm = TRUE)
+
+# Nb of trials per condition per dog (because of some NA it is not always 6 trials per condition per dog)
+trial_per_cond_count <- aggregate(choice_binary ~ dog_id + condition, data = xdata, FUN = function(x) sum(!is.na(x)))
+
+# Merge the two 
+data_K_choice_prop <- merge(K_choice_count, trial_per_cond_count, by = c("dog_id", "condition"), suffixes = c("_K_chosen", "_total"))
+
+#proportion
+data_K_choice_prop$proportion_K <- data_K_choice_prop$choice_binary_K_chosen / data_K_choice_prop$choice_binary_total
+
+#the percentiles
+data_boxplot <- data_K_choice_prop %>%
+  group_by(condition) %>%
+  summarise(
+    ymin = quantile(proportion_K, 0.10, na.rm = TRUE),
+    lower = quantile(proportion_K, 0.25, na.rm = TRUE),
+    middle = median(proportion_K, na.rm = TRUE),
+    upper = quantile(proportion_K, 0.75, na.rm = TRUE),
+    ymax = quantile(proportion_K, 0.90, na.rm = TRUE),
+    outliers = list(proportion_K[proportion_K < ymin | proportion_K > ymax])) %>%
+  ungroup() %>%
+  mutate(condition = factor(condition, levels = c("present", "absent", "back_turned", "looking_away")))
+
+#the outliers
+outliers_df <- data_boxplot %>%
+  tidyr::unnest(cols = c(outliers)) %>%
+  rename(outlier = outliers)
+
+boxplot_overall <- ggplot(data_boxplot, aes(x = condition)) +
+  geom_boxplot(aes(ymin = ymin,
+      lower = lower,
+      middle = middle,
+      upper = upper,
+      ymax = ymax,
+      fill = condition),stat = "identity", color = "black",outlier.shape = NA) +
+  geom_point(data = outliers_df, aes(x = condition, y = outlier), color = "black", size =1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "black", size = 1.2) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_manual(values = c("absent" = "cadetblue3",
+      "present" = "darkolivegreen1",
+      "back_turned" = "lightsalmon",
+      "looking_away" = "plum2"),
+      labels = c(
+      "present" = "Present",
+      "absent" = "Absent",
+      "back_turned" = "Back Turned",
+      "looking_away" = "Looking Away"))+
+      scale_x_discrete(labels = c(
+    "present" = "Present",
+    "absent" = "Absent",
+    "back_turned" = "Back Turned",
+    "looking_away" = "Looking Away")) +
+  labs(x = NULL,y = "Percentage of choice for the Knower") +
+  guides(fill = FALSE) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 20),
+        axis.text.y = element_text(size = 15),
+        axis.title.y = element_text(size = 20))
+
+boxplot_overall
+```
+
+### Plot comparison with (Catala et al., 2017)
+```{r}
+#We Will create a plot to compare our results overall all sessions to (Catala et al., 2017)
+
+#We create a table with our data and the one from (Catala et al., 2017)
+data.plot.vs.catala <- data.plot.overall
+data.plot.vs.catala$studies <- factor(c("us","us","us","us"))
+data.plot.vs.catala$bar_color <-c("#F8766D","#7CAE00","#00BFC4","#C77CFF" )
+
+present_catala <- data.frame(
+      condition = "Present", avg_knower_pref = 0.5637,se = NA,
+      ci_lower = 0.495,ci_upper = 0.629,
+      studies = "catala",bar_color="#9C3E36",
+      total_trials = 374)
+absent_catala <- data.frame(
+      condition = "Absent", avg_knower_pref = 0.72375, se = NA,
+      ci_lower = 0.659, ci_upper = 0.787, 
+      studies = "catala", bar_color="#366100",
+      total_trials = 372)
+back_turned_catala <-data.frame(
+      condition = "Back turned", avg_knower_pref = NA, se = NA,
+      ci_lower = NA, ci_upper = NA,
+      studies = "catala", bar_color="#00BFC4",
+      total_trials = 0)
+looking_away_catala <- data.frame(
+      condition = "Looking away", avg_knower_pref = 0.6175, se = NA,
+      ci_lower = 0.565, ci_upper = 0.669, 
+      studies = "catala", bar_color="#4D236D",
+      total_trials = 382)
+
+data.plot.vs.catala <- bind_rows(looking_away_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(back_turned_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(absent_catala,data.plot.vs.catala)
+data.plot.vs.catala <- bind_rows(present_catala,data.plot.vs.catala)
+
+data.plot.vs.catala$studies <- factor(data.plot.vs.catala$studies, levels = c("us", "catala")) #we put "us" and "catala" as factor
+data.plot.vs.catala$condition <- factor(data.plot.vs.catala$condition, 
+                levels = c("Present", "Absent", "Back turned", "Looking away")) 
+#we put the conditions name as factor
+data.plot.vs.catala$bar_id <-as.character(interaction(data.plot.vs.catala$condition, data.plot.vs.catala$studies))
+#We create a new variable giving the identity of each bar of our plot
+print (data.plot.vs.catala)
+
+
+bar_plot_vs_catala <- ggplot(data = data.plot.vs.catala, 
+  aes(x = condition, y = avg_knower_pref, fill = bar_id, group =studies)) + 
+  geom_bar(stat = "identity", position = position_dodge(width =0.9)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0.2, 
+                position = position_dodge(width = 0.9)) +
+  geom_text(aes(x = 0.78, y = 0.63, label = "*"), size = 8) +
+  geom_text(aes(x = 1.78, y = 0.6, label = "*"), size = 8) +
+  geom_text(aes(x = 2.23, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 2.77, y = 0.66, label = "*"), size = 8) +
+  geom_text(aes(x = 4.23, y = 0.7, label = "*"), size = 8) +
+  geom_text(aes(x = condition, y = 0.2, label = paste0("n=", total_trials)),
+            position = position_dodge(width = 0.9),
+            color = "black",size = 6)+
+  geom_hline(yintercept = 0.5, lty = 2) +
+  coord_cartesian(ylim = c(0.2, 0.8)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  ylab("Percentage of choice for the Knower") +  
+  scale_fill_manual( values = setNames(data.plot.vs.catala$bar_color, data.plot.vs.catala$bar_id))+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size=20),
+    axis.text.x = element_text(size = 14) )
+
+bar_plot_vs_catala
+```
+
+###First session
+```{r}
+#We are going to do intercept only binomial models (iobm)
+#First session, only test conditions
+test.data.1st<-xdata %>% 
+  filter(condition!="present")%>% 
+  filter (session ==1) #keep only the data from the first session
+iobm.1st.test=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=test.data.1st, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.1st.test <- confint(iobm.1st.test, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit)) 
+prob_intercept <- logit_to_prob(fixef(iobm.1st.test)[1]) 
+confint_prob <- logit_to_prob(confint_iobm.1st.test["(Intercept)", ]) 
+
+cat("Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.532
+#95% Confidence intervalle of probability: 0.508 - 0.555 
+
+summary(iobm.1st.test)
+#p-value = 0.00919 
+#z-value =  2.605
+#std error = 0.04882
+```
+
+```{r}
+#First session, Present condition
+present.data.1st<-xdata %>% 
+  filter(condition=="present") %>% 
+  filter (session ==1) 
+iobm.1st.present=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=present.data.1st, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.1st.present <- confint(iobm.1st.present, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.1st.present)[1])
+confint_prob <- logit_to_prob(confint_iobm.1st.present["(Intercept)", ]) 
+
+cat("Present Estimated probability:", round(prob_intercept, 3), "\n",
+    "Present 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0,558
+#95% Confidence intervalle of probability: 0.516 - 0.598 
+
+summary(iobm.1st.present)
+#p-value = 0.00627
+#z-value = 2.733
+#std error = 0.08486
+```
+
+```{r}
+#First session, Absent condition
+absent.data.1st<-xdata %>% 
+  filter(condition=="absent") %>% 
+  filter (session ==1) 
+iobm.1st.absent=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=absent.data.1st, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.1st.absent <- confint(iobm.1st.absent, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.1st.absent)[1])
+confint_prob <- logit_to_prob(confint_iobm.1st.absent["(Intercept)", ]) 
+
+cat("Absent Estimated probability:", round(prob_intercept, 3), "\n",
+    "Absent 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.484
+#95% Confidence intervalle of probability: 0.443 - 0.525  
+
+summary(iobm.1st.absent)
+#p-value = 0.448
+#z-value = -0.759
+#std error = 0.08441
+```
+
+```{r}
+#First session, Back turned condition
+back.turned.data.1st<-xdata %>% 
+  filter(condition=="back_turned") %>% 
+  filter (session ==1)  
+iobm.1st.back.turned=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=back.turned.data.1st, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.1st.back.turned <- confint(iobm.1st.back.turned, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.1st.back.turned)[1])
+confint_prob <- logit_to_prob(confint_iobm.1st.back.turned["(Intercept)", ]) 
+
+cat("Back turned Estimated probability:", round(prob_intercept, 3), "\n",
+    "Back turned 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.605
+#95% Confidence intervalle of probability: 0.564 - 0.645   
+
+summary(iobm.1st.back.turned)
+#p-value = 7.81e-07
+#z-value = 4.94
+#std error = 0.08629
+```
+
+```{r}
+#First session, Looking away condition
+looking.away.data.1st<-xdata %>% 
+  filter(condition=="looking_away") %>% 
+  filter (session ==1) 
+iobm.1st.looking.away=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=looking.away.data.1st, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.1st.looking.away <- confint(iobm.1st.looking.away, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.1st.looking.away)[1])
+confint_prob <- logit_to_prob(confint_iobm.1st.looking.away["(Intercept)", ]) 
+
+cat("Looking away Estimated probability:", round(prob_intercept, 3), "\n",
+    "Looking away 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.506
+#95% Confidence intervalle of probability: 0.465 - 0.547   
+
+summary(iobm.1st.looking.away)
+#p-value = 0.768
+#z-value = 0.296
+#std error = 0.08445
+```
+
+```{r}
+#First session, plot for with all conditions
+data.plot.1st <- xdata %>%
+  filter(session==1) %>%
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials) %>% 
+  mutate(condition=fct_recode(condition, 
+                              "Present" = "present",
+                              "Absent" = "absent",
+                              "Back turned" = "back_turned",
+                              "Looking away" = "looking_away"),
+         condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% #put the condition in order
+  group_by(condition) %>% 
+  summarise(avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+            se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se,
+    n_trials = sum(trials))   # Upper 95% CI
+
+bar_plot_1st<-ggplot(data=data.plot.1st,
+  aes(x=condition, y= avg_knower_pref, fill=condition)) + 
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +  #Error bars at 95% CI
+  geom_text(aes(x = 1, y = 0.69, label = "*"), size = 8) +  #p<0,05
+  geom_text(aes(x = 3, y = 0.69, label = "*"), size = 8) +
+  geom_hline(yintercept = 0.5, lty=2) +
+  coord_cartesian(ylim = c(0.2, 0.7))+
+  ylab("Average preference for the knower")+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),       
+    axis.text.x = element_text(size = 14) )
+
+bar_plot_1st
+```
+
+###Second session
+```{r}
+#We are going to do intercept only binomial models (iobm)
+
+#Second session, only test conditions
+test.data.2nd<-xdata %>% 
+  filter(condition!="present") %>% 
+  filter (session ==2)
+iobm.2nd.test=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=test.data.2nd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.2nd.test <- confint(iobm.2nd.test, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.2nd.test)[1])
+confint_prob <- logit_to_prob(confint_iobm.2nd.test["(Intercept)", ])
+
+cat("Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.549 
+#95% Confidence intervalle of probability:  0.524 - 0.573 
+
+summary(iobm.2nd.test)
+#p-value =0.000113 
+#z-value =  3.861 
+#std error = 0.0508 
+```
+
+```{r}
+#Second session, Present condition
+present.data.2nd<-xdata %>% 
+  filter(condition=="present") %>% 
+  filter (session ==2)
+iobm.2nd.present=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=present.data.2nd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.2nd.present <- confint(iobm.2nd.present, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.2nd.present)[1])
+confint_prob <- logit_to_prob(confint_iobm.2nd.present["(Intercept)", ]) 
+
+cat("Present Estimated probability:", round(prob_intercept, 3), "\n",
+    "Present 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.588 
+#95% Confidence intervalle of probability: 0.545 - 0.63 
+
+summary(iobm.2nd.present)
+#p-value = 7.27e-05
+#z-value = 3.967
+#std error =  0.08993
+```
+
+```{r}
+#Second session, Absent condition
+absent.data.2nd<-xdata %>% 
+  filter(condition=="absent") %>% 
+  filter (session ==2)
+iobm.2nd.absent=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=absent.data.2nd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.2nd.absent <- confint(iobm.2nd.absent, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.2nd.absent)[1])
+confint_prob <- logit_to_prob(confint_iobm.2nd.absent["(Intercept)", ]) 
+
+cat("Absent Estimated probability:", round(prob_intercept, 3), "\n",
+    "Absent 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.568 
+#95% Confidence intervalle of probability:  0.523 - 0.611 
+
+summary(iobm.2nd.absent)
+#p-value =  0.00289 
+#z-value = 2.979
+#std error =  0.09142
+```
+
+```{r}
+#Second session, Back turned condition
+back.turned.data.2nd<-xdata %>% 
+  filter(condition=="back_turned") %>% 
+  filter (session ==2)
+iobm.2nd.back.turned=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=back.turned.data.2nd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.2nd.back.turned <- confint(iobm.2nd.back.turned, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.2nd.back.turned)[1])
+confint_prob <- logit_to_prob(confint_iobm.2nd.back.turned["(Intercept)", ]) 
+
+cat("Back turned Estimated probability:", round(prob_intercept, 3), "\n",
+    "Back turned 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.584 
+#95% Confidence intervalle of probability:  0.541 - 0.626 
+
+summary(iobm.2nd.back.turned)
+#p-value =  0.000127
+#z-value = 3.833
+#std error =  0.08881
+```
+
+```{r}
+#Second session, Looking away condition
+looking.away.data.2nd<-xdata %>% 
+  filter(condition=="looking_away") %>% 
+  filter (session ==2)
+iobm.2nd.looking.away=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=looking.away.data.2nd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.2nd.looking.away <- confint(iobm.2nd.looking.away, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.2nd.looking.away)[1])
+confint_prob <- logit_to_prob(confint_iobm.2nd.looking.away["(Intercept)", ]) 
+
+cat("Looking away Estimated probability:", round(prob_intercept, 3), "\n",
+    "Looking away 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.495 
+#95% Confidence intervalle of probability:  0.452 - 0.538   
+
+summary(iobm.2nd.looking.away)
+#p-value = 0.827
+#z-value =  -0.219
+#std error =  0.08763
+```
+
+```{r}
+#Session session, plot for with all conditions
+data.plot.2nd <- xdata %>%
+  filter(session==2) %>%
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials) %>% 
+  mutate(condition=fct_recode(condition, 
+                              "Present" = "present",
+                              "Absent" = "absent",
+                              "Back turned" = "back_turned",
+                              "Looking away" = "looking_away"),
+         condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% #put the condition in order
+  group_by(condition) %>% 
+  summarise(avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+            se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se,
+    n_trials = sum(trials))   # Upper 95% CI
+
+bar_plot_2nd<-ggplot(data=data.plot.2nd,
+  aes(x=condition, y= avg_knower_pref, fill=condition)) + 
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +  #Error bars at 95% CI
+  geom_text(aes(x = 1, y = 0.69, label = "*"), size = 8) +  #p<0,05
+  geom_text(aes(x = 2, y = 0.69, label = "*"), size = 8) +
+  geom_text(aes(x = 3, y = 0.69, label = "*"), size = 8) +
+  geom_hline(yintercept = 0.5, lty=2) +
+  coord_cartesian(ylim = c(0.2, 0.7))+
+  ylab("Average preference for the knower")+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),       
+    axis.text.x = element_text(size = 14) )
+
+bar_plot_2nd
+```
+
+###Third session
+```{r}
+#We are going to do intercept only binomial models (iobm)
+
+#Third session, only test conditions
+test.data.3rd<-xdata %>% 
+  filter(condition!="present") %>% 
+  filter (session ==3)
+iobm.3rd.test=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=test.data.3rd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.3rd.test <- confint(iobm.3rd.test, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.3rd.test)[1])
+confint_prob <- logit_to_prob(confint_iobm.3rd.test["(Intercept)", ])
+
+cat("Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability : 0.55 
+#95% Confidence intervalle of probability:  0.525 - 0.575
+
+summary(iobm.3rd.test)
+#p-value = 0.000105 
+#z-value =   3.878 
+#std error = 0.05171 
+```
+
+```{r}
+#Third session, Present condition
+present.data.3rd<-xdata %>% 
+  filter(condition=="present") %>% 
+  filter (session ==3)
+iobm.3rd.present=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=present.data.3rd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.3rd.present <- confint(iobm.3rd.present, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.3rd.present)[1])
+confint_prob <- logit_to_prob(confint_iobm.3rd.present["(Intercept)", ]) 
+
+cat("Present Estimated probability:", round(prob_intercept, 3), "\n",
+    "Present 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.542 
+#95% Confidence intervalle of probability: 0.498 - 0.585
+
+summary(iobm.3rd.present)
+#p-value = 0.0617
+#z-value = 1.869
+#std error =  0.0894
+```
+
+```{r}
+#Third session, Absent condition
+absent.data.3rd<-xdata %>% 
+  filter(condition=="absent") %>% 
+  filter (session ==3)
+iobm.3rd.absent=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=absent.data.3rd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.3rd.absent <- confint(iobm.3rd.absent, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.3rd.absent)[1])
+confint_prob <- logit_to_prob(confint_iobm.3rd.absent["(Intercept)", ]) 
+
+cat("Absent Estimated probability:", round(prob_intercept, 3), "\n",
+    "Absent 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.609 
+#95% Confidence intervalle of probability:  0.566 - 0.651 
+
+summary(iobm.3rd.absent)
+#p-value = 1.17e-06 
+#z-value = 4.86
+#std error =  0.09129
+```
+
+```{r}
+#Third session, Back turned condition
+back.turned.data.3rd<-xdata %>% 
+  filter(condition=="back_turned") %>% 
+  filter (session ==3)
+iobm.3rd.back.turned=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=back.turned.data.3rd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.3rd.back.turned <- confint(iobm.3rd.back.turned, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.3rd.back.turned)[1])
+confint_prob <- logit_to_prob(confint_iobm.3rd.back.turned["(Intercept)", ]) 
+
+cat("Back turned Estimated probability:", round(prob_intercept, 3), "\n",
+    "Back turned 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.562 
+#95% Confidence intervalle of probability:  0.518 - 0.604  
+
+summary(iobm.3rd.back.turned)
+#p-value =  0.00588
+#z-value = 2.755
+#std error =  0.08977
+```
+
+```{r}
+#Third session, Looking away condition
+looking.away.data.3rd<-xdata %>% 
+  filter(condition=="looking_away") %>% 
+  filter (session ==3)
+iobm.3rd.looking.away=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=looking.away.data.3rd, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.3rd.looking.away <- confint(iobm.3rd.looking.away, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.3rd.looking.away)[1])
+confint_prob <- logit_to_prob(confint_iobm.3rd.looking.away["(Intercept)", ]) 
+
+cat("Looking away Estimated probability:", round(prob_intercept, 3), "\n",
+    "Looking away 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.479 
+#95% Confidence intervalle of probability: 0.436 - 0.523   
+
+summary(iobm.3rd.looking.away)
+#p-value = 0.349
+#z-value =  -0.936
+#std error =  0.08925
+```
+
+```{r}
+#Third session, plot for with all conditions
+data.plot.3rd <- xdata %>%
+  filter(session==3) %>%
+  group_by(dog_id, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials) %>% 
+  mutate(condition=fct_recode(condition, 
+                              "Present" = "present",
+                              "Absent" = "absent",
+                              "Back turned" = "back_turned",
+                              "Looking away" = "looking_away"),
+         condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% #put the condition in order
+  group_by(condition) %>% 
+  summarise(avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+            se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se,
+    n_trials = sum(trials))   # Upper 95% CI
+
+bar_plot_3rd<-ggplot(data=data.plot.3rd,
+  aes(x=condition, y= avg_knower_pref, fill=condition)) + 
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +  #Error bars at 95% CI
+  geom_text(aes(x = 1, y = 0.69, label = "*"), size = 8) +  #p<0,05
+  geom_text(aes(x = 2, y = 0.69, label = "*"), size = 8) +
+  geom_text(aes(x = 3, y = 0.69, label = "*"), size = 8) +
+  geom_hline(yintercept = 0.5, lty=2) +
+  coord_cartesian(ylim = c(0.2, 0.7))+
+  ylab("Average preference for the knower")+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),       
+    axis.text.x = element_text(size = 14) )
+
+bar_plot_3rd
+```
+
+###Plot with result of each session + all (A CHECKER)
+```{r}
+#Run the code of the plot of each/both session separatly : data.plot.overall, data.plot.1st, data.plot.2nd, data.plot.3rd
+#Data from session 1, 2 and 3
+df_session <- xdata %>%  
+  group_by(session, condition) %>%
+  summarise(prop_choice = mean(choice_binary, na.rm = TRUE),
+            n = n()) %>%
+  mutate(
+    se = sqrt(prop_choice * (1 - prop_choice) / n),
+    ci_lower = prop_choice - 1.96 * se,
+    ci_upper = prop_choice + 1.96 * se) %>%
+  mutate(condition=fct_recode(condition, 
+                              "Present" = "present",
+                              "Absent" = "absent",
+                              "Back turned" = "back_turned",
+                              "Looking away" = "looking_away"),
+         condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% 
+  ungroup()
+
+#Data from all sessions
+df_all <- xdata %>%
+  group_by(condition) %>%
+  summarise(prop_choice = mean(choice_binary, na.rm = TRUE),
+            n = n()) %>%
+  mutate(
+    session = "All",
+    se = sqrt(prop_choice * (1 - prop_choice) / n),
+    ci_lower = prop_choice - 1.96 * se,
+    ci_upper = prop_choice + 1.96 * se) %>%
+  mutate(condition=fct_recode(condition, 
+                              "Present" = "present",
+                              "Absent" = "absent",
+                              "Back turned" = "back_turned",
+                              "Looking away" = "looking_away"),
+         condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away")) %>% 
+  select(session, condition, prop_choice, n, se, ci_lower, ci_upper)
+
+#Fusion the two of them
+df_fusion <- bind_rows(
+  df_session %>% mutate(session = as.character(session)),
+  df_all) %>%
+  mutate(session = recode(session,
+                     "1" = "S1",
+                     "2" = "S2",
+                     "3" = "S3",
+                     "All" = "All"),
+    session = factor(session, levels = c("S1", "S2", "S3","All")),
+    condition = fct_relevel(condition, "Present", "Absent", "Back turned", "Looking away"))
+
+
+
+#Colors
+my_colors <- c(
+  "s1_present" = "darkolivegreen1",
+  "s1_absent" = "cadetblue1",
+  "s1_back_turned" = "lightsalmon",
+  "s1_looking_away" = "plum1",
+  "s2_present" = "darkolivegreen2",
+  "s2_absent" = "cadetblue2",
+  "s2_back_turned" = "coral1",
+  "s2_looking_away" = "plum3",
+  "s3_present" = "darkolivegreen3",
+  "s3_absent" = "cadetblue3",
+  "s3_back_turned" = "coral3",
+  "s3_looking_away" = "mediumorchid3",
+  "all_present" = "darkolivegreen4",
+  "all_absent" = "cadetblue4",
+  "all_back_turned" = "coral4",
+  "all_looking_away" = "mediumorchid4")
+
+df_fusion <- df_fusion %>%
+  mutate(bar_id = paste0(tolower(as.character(session)), "_",
+      tolower(gsub(" ", "_", condition))))
+df_fusion$color <- my_colors[df_fusion$bar_id]
+df_fusion$y_pos <- -0.02
+
+plot_comparing_sessions<- ggplot(df_fusion, aes(x = condition, y = prop_choice, fill = color,group = session)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  scale_fill_identity()+
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                position = position_dodge(width = 0.8),
+                width = 0.2) +
+  geom_text(aes(x = 0.7, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 0.9, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 1.3, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 1.9, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 2.1, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 2.3, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 2.7, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 2.9, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 3.1, y = 0.69, label = "*"), size = 6) +
+  geom_text(aes(x = 3.3, y = 0.69, label = "*"), size = 6) +
+#  geom_segment(aes(x = 0.6, xend = 1.8, y = 0.75, yend = 0.75)) +
+#  geom_text(aes(x = 1.2, y = 0.775, label = "S1"), size = 4) +
+#  geom_segment(aes(x = 1.6, xend = 3.4, y = 0.8, yend = 0.8)) +
+#  geom_text(aes(x = 2.5, y = 0.825, label = "Both + S1"), size = 4) +
+#  geom_segment(aes(x = 2.6, xend = 4.4, y = 0.85, yend = 0.85)) +
+#  geom_text(aes(x = 3.5, y = 0.875, label = "Both + S1 + S2"), size = 4) +
+#  geom_segment(aes(x = 0.9, xend = 4.4, y = 0.9, yend = 0.9)) +
+#  geom_text(aes(x = 2.7, y = 0.925, label = "Both + S2"), size = 4) +
+  geom_hline(yintercept = 0.5, lty = 2) +
+  geom_text(aes(label = session, y = y_pos),
+            position = position_dodge(width = 0.8),
+            color = "black",
+            size = 4) +
+  geom_text(aes(label = paste0("n=", n), y = 0.02),
+            position = position_dodge(width = 0.8),
+            color = "black",
+            size = 4) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(-0.03,0.95)) +
+  labs(x = NULL, y = "Percentage of choice for the Knower",
+       fill = "Session") +
+  theme_minimal() +
+  theme(legend.position = "none")+
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5,size = 20,vjust = 0),
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(size = 20))
+```
+
+print(plot_comparing_sessions)
+
+
+#Learning process
+##Across the session
+```{r}
+#See the results of "difference between conditions"
+```
+
+##Comparison with the first trial of the session
+###First session
+```{r}
+#We are also going to do intercept only binomial models
+#We create a data table with the 1st trial (ft) of each condition for each dog
+ft.1st.data<-xdata %>% 
+  filter (session ==1)  %>% 
+  group_by(dog_name, condition) %>%
+  mutate(trial_within_cond = rank(trial, ties.method = "first")) %>% #we give a rank to each trial within the condition
+  ungroup() %>% 
+  filter(trial_within_cond==1) #we only keep the trials of rank 1
+```
+
+```{r}
+#First session, first trial of only test condition
+ft.1st.data.test<- ft.1st.data %>% 
+  filter(condition!="present") #we remove the present condition
+
+ft.iobm.1st.test=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.1st.data.test, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.1st.test <- confint(ft.iobm.1st.test, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.1st.test)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.1st.test["(Intercept)", ])
+
+cat("Ft Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.535 
+#95% Confidence intervalle of probability: 0.477 - 0.593   
+
+summary(ft.iobm.1st.test) 
+#p-value = 0.234
+#z-value =  1.19
+#std error = 0.1194
+
+```
+
+```{r}
+#First session, first trial of present condition
+ft.1st.data.present<- ft.1st.data %>% 
+  filter(condition=="present")
+
+ft.iobm.1st.present=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.1st.data.present, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.1st.present <- confint(ft.iobm.1st.present, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.1st.present)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.1st.present["(Intercept)", ])
+
+cat("Ft Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.585  
+#95% Confidence intervalle of probability: 0.483 - 0.68   
+
+summary(ft.iobm.1st.present) 
+#p-value = 0.101
+#z-value = 1.641
+#std error = 0.2095
+```
+
+```{r}
+#First session, first trial of absent condition
+ft.1st.data.absent<- ft.1st.data %>% 
+  filter(condition=="absent")
+
+ft.iobm.1st.absent=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.1st.data.absent, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.1st.absent <- confint(ft.iobm.1st.absent, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.1st.absent)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.1st.absent["(Intercept)", ])
+
+cat("Ft Present Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Present 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.521 
+#95% Confidence intervalle of probability:0.421 - 0.62  
+
+summary(ft.iobm.1st.absent) 
+#p-value = 0.68
+#z-value = 0.412
+#std error = 0.20652
+```
+
+```{r}
+#First session, first trial of back turned condition
+ft.1st.data.back.turned<- ft.1st.data %>% 
+  filter(condition=="back_turned")
+
+ft.iobm.1st.back.turned=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.1st.data.back.turned, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.1st.back.turned <- confint(ft.iobm.1st.back.turned, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.1st.back.turned)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.1st.back.turned["(Intercept)", ])
+
+cat("Ft Back turned Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Back turned 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.596 
+#95% Confidence intervalle of probability:0.494 - 0.69  
+
+summary(ft.iobm.1st.back.turned) 
+#p-value = 0.0652
+#z-value = 1.844
+#std error = 0.2103
+```
+
+```{r}
+#First session, first trial of looking away condition
+ft.1st.data.looking.away<- ft.1st.data %>% 
+  filter(condition=="looking_away")
+
+ft.iobm.1st.looking.away=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.1st.data.looking.away, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.1st.looking.away <- confint(ft.iobm.1st.looking.away, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.1st.looking.away)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.1st.looking.away["(Intercept)", ])
+
+cat("Ft Looking away Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Looking away 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.489  
+#95% Confidence intervalle of probability:0.39 - 0.589  
+
+summary(ft.iobm.1st.looking.away) 
+#p-value = 0.837
+#z-value = -0.206
+#std error = 0.20634
+```
+
+```{r}
+#Plot comparing the results in the 1st to the the rest of the session
+data.plot.ft.1st <- data.plot.1st  #see in #Analytic stats,##Individual level, ###First session 
+data.plot.ft.1st$studies <- factor(c("us","us","us","us"))
+data.plot.ft.1st$bar_color <-c("darkolivegreen","deepskyblue4","coral1","mediumorchid4" )
+
+present_ft <- data.frame(
+      condition = "Present",
+      avg_knower_pref = 0.581,
+      se = NA,
+      ci_lower = 0.478,
+      ci_upper = 0.676,
+      studies = "ft",
+      bar_color="darkolivegreen1",
+      n_trials=93)
+absent_ft <- data.frame(
+      condition = "Absent",
+      avg_knower_pref = 0.527,
+      se = NA,
+      ci_lower = 0.425,
+      ci_upper = 0.626,
+      studies = "ft",
+      bar_color="lightblue",
+      n_trials=93)
+back_turned_ft <-data.frame(
+      condition = "Back turned",
+      avg_knower_pref = 0.602,
+      se = NA,
+      ci_lower = 0.50,
+      ci_upper = 0.696,
+      studies = "ft",
+      bar_color="lightsalmon",
+      n_trials=93)
+looking_away_ft <- data.frame(
+      condition = "Looking away",
+      avg_knower_pref = 0.484,
+      se = NA,
+      ci_lower = 0.384,
+      ci_upper = 0.585,
+      studies = "ft",
+      bar_color="plum2",
+      n_trials=93)
+
+data.plot.ft.1st <- rbind(data.plot.ft.1st,present_ft)
+data.plot.ft.1st <- rbind(data.plot.ft.1st,absent_ft)
+data.plot.ft.1st <- rbind(data.plot.ft.1st,back_turned_ft)
+data.plot.ft.1st <- rbind(data.plot.ft.1st,looking_away_ft)
+
+data.plot.ft.1st$studies <- factor(data.plot.ft.1st$studies, levels = c("ft", "us"))
+data.plot.ft.1st$condition <- factor(data.plot.ft.1st$condition, 
+                                        levels = c("Present", "Absent", "Back turned", "Looking away"))
+data.plot.ft.1st$bar_id <- as.character(interaction(data.plot.ft.1st$condition, data.plot.ft.1st$studies))
+
+bar_plot_ft_1st <- ggplot(data = data.plot.ft.1st, 
+  aes(x = condition, y = avg_knower_pref, fill = bar_id, group =studies)) + 
+  geom_bar(stat = "identity", position = position_dodge(width =0.9)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0.2, 
+                position = position_dodge(width = 0.9)) +
+  geom_text(aes(x = 1.23, y = 0.73, label = "*"), size = 8) +
+  geom_text(aes(x = 3.23, y = 0.73, label = "*"), size = 8) +
+  geom_hline(yintercept = 0.5, lty = 2) +
+  geom_text(aes(label = paste0("n=", n_trials), y = 0.2),
+            position = position_dodge(width = 0.8),
+            color = "black",
+            size = 5) +
+  coord_cartesian(ylim = c(0.2, 0.85)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  ylab("Percentage of choice for the Knower") +  
+  scale_fill_manual( values = setNames(data.plot.ft.1st$bar_color, data.plot.ft.1st$bar_id))+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20),
+    axis.text.x = element_text(size = 14) )
+
+bar_plot_ft_1st
+```
+
+###Second session
+```{r}
+#We create a data table with the 1st trial (ft) of the 2nd session of each condition for each dog
+ft.2nd.data<-xdata %>% 
+  filter (session ==2)  %>% 
+  group_by(dog_name, condition) %>%
+  mutate(trial_within_cond = rank(trial, ties.method = "first")) %>%
+  ungroup() %>% 
+  filter(trial_within_cond==1) 
+```
+
+```{r}
+#Second session, first trial of only test condition
+ft.2nd.data.test<- ft.2nd.data %>% 
+  filter(condition!="present") #we remove the present condition
+
+ft.iobm.2nd.test=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.2nd.data.test, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.2nd.test <- confint(ft.iobm.2nd.test, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.2nd.test)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.2nd.test["(Intercept)", ])
+
+cat("Ft Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability:  0.556 
+#95% Confidence intervalle of probability:  0.494 - 0.616  
+
+summary(ft.iobm.2nd.test) 
+#p-value = 0.0758
+#z-value = 1.775
+#std error = 0.1263 
+
+```
+
+```{r}
+#Second session, first trial of present condition
+ft.2nd.data.present<- ft.2nd.data %>% 
+  filter(condition=="present")
+
+ft.iobm.2nd.present=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.2nd.data.present, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.2nd.present <- confint(ft.iobm.2nd.present, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.2nd.present)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.2nd.present["(Intercept)", ])
+
+cat("Ft Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability:   0.69 
+#95% Confidence intervalle of probability:    0.585 - 0.778 
+
+summary(ft.iobm.2nd.present) 
+#p-value =  0.00057
+#z-value =  3.446 
+#std error = 0.2317
+```
+
+```{r}
+#Second session, first trial of absent condition
+ft.2nd.data.absent<- ft.2nd.data %>% 
+  filter(condition=="absent")
+
+ft.iobm.2nd.absent=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.2nd.data.absent, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.2nd.absent <- confint(ft.iobm.2nd.absent, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.2nd.absent)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.2nd.absent["(Intercept)", ])
+
+cat("Ft Present Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Present 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.563
+#95% Confidence intervalle of probability :  0.458 - 0.663
+
+summary(ft.iobm.2nd.absent) 
+#p-value =  0.24
+#z-value = 1.175
+#std error =   0.2164 
+```
+
+```{r}
+#Second session, first trial of back turned condition
+ft.2nd.data.back.turned<- ft.2nd.data %>% 
+  filter(condition=="back_turned")
+
+ft.iobm.2nd.back.turned=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.2nd.data.back.turned, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.2nd.back.turned <- confint(ft.iobm.2nd.back.turned, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.2nd.back.turned)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.2nd.back.turned["(Intercept)", ])
+
+cat("Ft Back turned Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Back turned 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability:  0.667 
+#95% Confidence intervalle of probability:0.562 - 0.757
+
+summary(ft.iobm.2nd.back.turned) 
+#p-value = 0.00231
+#z-value = 3.048 
+#std error =  0.2274 
+```
+
+```{r}
+#Second session, first trial of looking away condition
+ft.2nd.data.looking.away<- ft.2nd.data %>% 
+  filter(condition=="looking_away")
+
+ft.iobm.2nd.looking.away=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.2nd.data.looking.away, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.2nd.looking.away <- confint(ft.iobm.2nd.looking.away, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.2nd.looking.away)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.2nd.looking.away["(Intercept)", ])
+
+cat("Ft Looking away Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Looking away 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability:  0.437 
+#95% Confidence intervalle of probability: 0.337 - 0.542 
+
+summary(ft.iobm.2nd.looking.away) 
+#p-value =  0.24
+#z-value = -1.175
+#std error = 0.2164 
+```
+
+```{r}
+#Plot comparing the results in the 1st trail to the the rest of the session
+data.plot.ft.2nd <- data.plot.2nd  #see in #Analytic stats,##Individual level, ###Second session 
+data.plot.ft.2nd$studies <- factor(c("us","us","us","us"))
+data.plot.ft.2nd$bar_color <-c("darkolivegreen","deepskyblue4","coral1","mediumorchid4" )
+
+present_ft <- data.frame(
+      condition = "Present",
+      avg_knower_pref = 0.69,
+      se = NA,
+      ci_lower = 0.585 ,
+      ci_upper = 0.778,
+      studies = "ft",
+      bar_color="darkolivegreen1",
+      n_trials=87)
+absent_ft <- data.frame(
+      condition = "Absent",
+      avg_knower_pref = 0.563,
+      se = NA,
+      ci_lower = 0.458,
+      ci_upper =0.663 ,
+      studies = "ft",
+      bar_color="lightblue",
+      n_trials=87)
+back_turned_ft <-data.frame(
+      condition = "Back turned",
+      avg_knower_pref =  0.667  ,
+      se = NA,
+      ci_lower =  0.562 ,
+      ci_upper = 0.757 ,
+      studies = "ft",
+      bar_color="lightsalmon",
+      n_trials=87)
+looking_away_ft <- data.frame(
+      condition = "Looking away",
+      avg_knower_pref = 0.437 ,
+      se = NA,
+      ci_lower = 0.337 ,
+      ci_upper = 0.542,
+      studies = "ft",
+      bar_color="plum2",
+      n_trials=87)
+
+data.plot.ft.2nd <- rbind(data.plot.ft.2nd,present_ft)
+data.plot.ft.2nd <- rbind(data.plot.ft.2nd,absent_ft)
+data.plot.ft.2nd <- rbind(data.plot.ft.2nd,back_turned_ft)
+data.plot.ft.2nd <- rbind(data.plot.ft.2nd,looking_away_ft)
+
+data.plot.ft.2nd$studies <- factor(data.plot.ft.2nd$studies, levels = c("ft", "us"))
+data.plot.ft.2nd$condition <- factor(data.plot.ft.2nd$condition, 
+                                        levels = c("Present", "Absent", "Back turned", "Looking away"))
+data.plot.ft.2nd$bar_id <- as.character(interaction(data.plot.ft.2nd$condition, data.plot.ft.2nd$studies))
+
+bar_plot_ft_2nd <- ggplot(data = data.plot.ft.2nd, 
+  aes(x = condition, y = avg_knower_pref, fill = bar_id, group =studies)) + 
+  geom_bar(stat = "identity", position = position_dodge(width =0.9)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0.2, 
+                position = position_dodge(width = 0.9)) +
+  geom_text(aes(x = 1.23, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 0.77, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 2.77, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 3.23, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 2.23, y = 0.8, label = "*"), size = 8) +
+  geom_hline(yintercept = 0.5, lty = 2) +
+  geom_text(aes(label = paste0("n=", n_trials), y = 0.2),
+            position = position_dodge(width = 0.8),
+            color = "black",
+            size = 5) +
+  coord_cartesian(ylim = c(0.2, 0.85)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  ylab(NULL) +  
+  scale_fill_manual( values = setNames(data.plot.ft.2nd$bar_color, data.plot.ft.2nd$bar_id))+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),       
+    axis.text.x = element_text(size = 14) )
+
+bar_plot_ft_2nd
+```
+
+###Third session
+```{r}
+#We create a data table with the 1st trial (ft) of the 3rd session of each condition for each dog
+ft.3rd.data<-xdata %>% 
+  filter (session ==3)  %>% 
+  group_by(dog_name, condition) %>%
+  mutate(trial_within_cond = rank(trial, ties.method = "first")) %>%
+  ungroup() %>% 
+  filter(trial_within_cond==1) 
+```
+
+```{r}
+#Third session, first trial of only test condition
+ft.3rd.data.test<- ft.3rd.data %>% 
+  filter(condition!="present") #we remove the present condition
+
+ft.iobm.3rd.test=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.3rd.data.test, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.3rd.test <- confint(ft.iobm.3rd.test, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.3rd.test)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.3rd.test["(Intercept)", ])
+
+cat("Ft Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.552
+#95% Confidence intervalle of probability: 0.49 - 0.612
+
+summary(ft.iobm.3rd.test) 
+#p-value = 0.102
+#z-value = 1.635
+#std error = 0.1267
+
+```
+
+```{r}
+#Third session, first trial of present condition
+ft.3rd.data.present<- ft.3rd.data %>% 
+  filter(condition=="present")
+
+ft.iobm.3rd.present=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.3rd.data.present, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.3rd.present <- confint(ft.iobm.3rd.present, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.3rd.present)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.3rd.present["(Intercept)", ])
+
+cat("Ft Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.5 
+#95% Confidence intervalle of probability: 0.395 - 0.605
+
+summary(ft.iobm.3rd.present) 
+#p-value = 1
+#z-value = 0
+#std error = 2.182e-01
+
+#Model is nearly unidentifiable: large eigenvalue ratio - Rescale variables?
+```
+
+```{r}
+#Third session, first trial of absent condition
+ft.3rd.data.absent<- ft.3rd.data %>% 
+  filter(condition=="absent")
+
+ft.iobm.3rd.absent=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.3rd.data.absent, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.3rd.absent <- confint(ft.iobm.3rd.absent, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.3rd.absent)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.3rd.absent["(Intercept)", ])
+
+cat("Ft Present Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Present 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.643 
+#95% Confidence intervalle of probability : 0.535 - 0.738 
+
+summary(ft.iobm.3rd.absent) 
+#p-value = 0.00994
+#z-value = 2.578
+#std error = 0.2280
+```
+
+```{r}
+#Third session, first trial of back turned condition
+ft.3rd.data.back.turned<- ft.3rd.data %>% 
+  filter(condition=="back_turned")
+
+ft.iobm.3rd.back.turned=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.3rd.data.back.turned, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.3rd.back.turned <- confint(ft.iobm.3rd.back.turned, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.3rd.back.turned)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.3rd.back.turned["(Intercept)", ])
+
+cat("Ft Back turned Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Back turned 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.571 
+#95% Confidence intervalle of probability : 0.464 - 0.673
+
+summary(ft.iobm.3rd.back.turned) 
+#p-value = 0.193
+#z-value = 1.302
+#std error = 0.2209 
+```
+
+```{r}
+#Third session, first trial of looking away condition
+ft.3rd.data.looking.away<- ft.3rd.data %>% 
+  filter(condition=="looking_away")
+
+ft.iobm.3rd.looking.away=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.3rd.data.looking.away, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_ft.iobm.3rd.looking.away <- confint(ft.iobm.3rd.looking.away, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(ft.iobm.3rd.looking.away)[1])
+confint_prob <- logit_to_prob(confint_ft.iobm.3rd.looking.away["(Intercept)", ])
+
+cat("Ft Looking away Estimated probability:", round(prob_intercept, 3), "\n",
+    "Ft Looking away 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.44
+#95% Confidence intervalle of probability: 0.338 - 0.548
+
+summary(ft.iobm.3rd.looking.away) 
+#p-value = 0.276
+#z-value = -1.088
+#std error = 0.2198
+```
+
+```{r}
+#Plot comparing the results in the 1st trail to the the rest of the session
+data.plot.ft.3rd <- data.plot.3rd  #see in #Analytic stats,individual level, third session
+data.plot.ft.3rd$studies <- factor(c("us","us","us","us"))
+data.plot.ft.3rd$bar_color <-c("darkolivegreen","deepskyblue4","coral1","mediumorchid4" )
+
+present_ft <- data.frame(
+      condition = "Present",
+      avg_knower_pref = 0.5,
+      se = NA,
+      ci_lower = 0.395,
+      ci_upper = 0.605,
+      studies = "ft",
+      bar_color="darkolivegreen1",
+      n_trials=84)
+absent_ft <- data.frame(
+      condition = "Absent",
+      avg_knower_pref = 0.643,
+      se = NA,
+      ci_lower =  0.535,
+      ci_upper = 0.738,
+      studies = "ft",
+      bar_color="lightblue",
+      n_trials=84)
+back_turned_ft <-data.frame(
+      condition = "Back turned",
+      avg_knower_pref =  0.571  ,
+      se = NA,
+      ci_lower =  0.464 ,
+      ci_upper = 0.673 ,
+      studies = "ft",
+      bar_color="lightsalmon",
+      n_trials=84)
+looking_away_ft <- data.frame(
+      condition = "Looking away",
+      avg_knower_pref = 0.44 ,
+      se = NA,
+      ci_lower = 0.338,
+      ci_upper = 0.548,
+      studies = "ft",
+      bar_color="plum2",
+      n_trials=84)
+
+data.plot.ft.3rd <- rbind(data.plot.ft.3rd,present_ft)
+data.plot.ft.3rd <- rbind(data.plot.ft.3rd,absent_ft)
+data.plot.ft.3rd <- rbind(data.plot.ft.3rd,back_turned_ft)
+data.plot.ft.3rd <- rbind(data.plot.ft.3rd,looking_away_ft)
+
+data.plot.ft.3rd$studies <- factor(data.plot.ft.3rd$studies, levels = c("ft", "us"))
+data.plot.ft.3rd$condition <- factor(data.plot.ft.3rd$condition, 
+                                        levels = c("Present", "Absent", "Back turned", "Looking away"))
+data.plot.ft.3rd$bar_id <- as.character(interaction(data.plot.ft.3rd$condition, data.plot.ft.3rd$studies))
+
+bar_plot_ft_3rd <- ggplot(data = data.plot.ft.3rd, 
+  aes(x = condition, y = avg_knower_pref, fill = bar_id, group =studies)) + 
+  geom_bar(stat = "identity", position = position_dodge(width =0.9)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0.2, 
+                position = position_dodge(width = 0.9)) +
+  geom_text(aes(x = 1.77, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 2.23, y = 0.8, label = "*"), size = 8) +
+  geom_text(aes(x = 3.23, y = 0.8, label = "*"), size = 8) +
+  geom_hline(yintercept = 0.5, lty = 2) +
+  geom_text(aes(label = paste0("n=", n_trials), y = 0.2),
+            position = position_dodge(width = 0.8),
+            color = "black",
+            size = 5) +
+  coord_cartesian(ylim = c(0.2, 0.85)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  ylab(NULL) +  
+  scale_fill_manual( values = setNames(data.plot.ft.3rd$bar_color, data.plot.ft.3rd$bar_id))+
+  theme_bw()+
+  theme(legend.position = "none",
+    axis.title.x = element_blank(),       
+    axis.text.x = element_text(size = 14) )
+
+bar_plot_ft_3rd
+```
+
+bar_plot_ft_1st + bar_plot_ft_2nd + bar_plot_ft_3rd + plot_layout(ncol = 2)
+
+#Impact model
+##Overall session
+```{r}
+#We will see if the n° of the trial, the n° of the session, the age, the sex or the condition have a significant impact on the results
+
+between.model.data <- xdata %>%
+  mutate(condition = fct_recode(condition,         #rename the conditions
+                                "Present" = "present",
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away")) %>%
+  mutate(condition = fct_relevel(condition, "Present")) %>%  # We set "present" as reference (control condition, his level will be [1])
+  mutate(z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         z.session=as.vector(scale(session, center = TRUE, scale=TRUE)),
+         sex.c=
+           as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[4]), center=TRUE, scale= FALSE)))
+
+#numerical variables :age, trial, session
+#scale() : standardization of the variable by subtracting the mean (center) and then dividing by the standard deviation (scale), therefore all are variable z-centered have a mean of 0 and a standard deviation of 1.
+#as.vetor() : we convert this result into a vector (because scale automatically gives back a matrix)
+
+#for the conditions (same for sex) : 
+#the variable condition has character values so we change it as factor of 4 levels (actually it is already put has factor but it safer this way) 
+#we compare each element of condition to level corresponding ([2] absent, [3] back turned, [4] looking away)
+#as.numeric() converts the logical into numeric : for example if the element is "absent" and is compared to level 2, as.numeric will convert the TRUE into a 1.
+#so we have a binary numeric variable : 1 if the elements equal the corresponding level, 0 otherwise
+#We center the variable but we do not scale it and then convert it to a vector 
+#Centering improves the interpretation of model coefficients and reduces the collinearity in mixed models (which we will be using)
+
+levels(as.factor(between.model.data$condition)) #To check if it worked and if the levels are in the right order
+```
+
+```{r}
+#We run the model
+between.model=glmer(choice_binary ~ condition + z.age + z.trial + sex.c +z.session+
+        (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial+z.session|dog_id),
+         data=between.model.data, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#See the results
+round(summary(between.model)$coefficients,3)
+summary(between.model)$varcor
+#The more the Std deviation is high, the more we have a high variation of the results depending of this variable between dogs 
+
+#more precise p-value with post hoc
+emm <- emmeans(between.model, ~ condition)
+
+# paired comparison with Present
+contrast(emm, method = "trt.vs.ctrl", ref = "Present", adjust = "bonferroni")
+
+#all paires comparison
+pairs(emm, adjust = "tukey")
+
+#                      Estimate Std. Error z value Pr(>|z|)
+#(Intercept)              0.263      0.058   4.536    0.000
+#conditionAbsent         -0.052      0.081  -0.645    0.519
+#conditionBack turned     0.077      0.077   0.991    0.322
+#conditionLooking away   -0.289      0.082  -3.525    0.000
+#z.age                    0.007      0.029   0.257    0.798
+#z.trial                 -0.041      0.029  -1.377    0.168
+#sex.c                   -0.021      0.057  -0.370    0.711
+#z.session                0.015      0.026   0.579    0.562
+
+# Groups Name            Std.Dev. Corr                              
+#dog_id (Intercept)     0.131400                                   
+#        condition.abs.c 0.323976  0.311                            
+#        condition.bt.c  0.242526 -0.495  0.579                     
+#        condition.la.c  0.363871 -0.697 -0.181  0.661              
+#        z.trial         0.131927 -0.491  0.456  0.499 -0.057       
+#        z.session       0.036966 -0.565  0.024  0.120 -0.170  0.883
+
+#Bonferroni
+#contrast               estimate     SE  df z.ratio p.value
+#Absent - Present        -0.0520 0.0806 Inf  -0.645  1.0000
+#Back turned - Present    0.0766 0.0773 Inf   0.991  0.9655
+#Looking away - Present  -0.2891 0.0820 Inf  -3.525  0.0013
+
+#Tukey
+# contrast                   estimate     SE  df z.ratio p.value
+#Present - Absent             0.0520 0.0806 Inf   0.645  0.9173
+#Present - Back turned       -0.0766 0.0773 Inf  -0.991  0.7548
+#Present - Looking away       0.2891 0.0820 Inf   3.525  0.0024
+#Absent - Back turned        -0.1286 0.0783 Inf  -1.643  0.3544
+#Absent - Looking away        0.2371 0.0914 Inf   2.593  0.0469
+#Back turned - Looking away   0.3657 0.0779 Inf   4.695  <.0001
+```
+
+```{r}
+#We remove every fixed effect one by one and compared it to the complete model with a Chi² test (likelihood ratio test) 
+drop.between.model <- round(drop1(between.model, test="Chisq"),3)
+
+aic_between_model <- drop.between.model[1, "AIC"] #AIC of the complet model
+aic_between_model_drop <- drop.between.model[, "AIC"][-1] #AIC of the reduced models
+delta_aic_between_model <- c(round(aic_between_model - aic_between_model_drop, 2))  #ΔAIC between full and reduced model
+
+#We do a table to summary of all this results
+drop_results <- drop.between.model
+drop_results$delta_AIC <- c(NA, delta_aic_between_model) # add the column delta AIC
+drop_results
+
+#so when we remove the variable condition : we have an AIC (the higher it is the more removing this effect worsen the model), we have a p-value (removing as a significant effect or not), we have a delta_AIC (if >2, the effect was important)
+
+#          npar    AIC    LRT Pr(Chi) delta_AIC
+#<none>         8710.8                         
+#condition    3 8726.4 21.617   0.000    -15.62
+#z.age        1 8708.8  0.066   0.797      1.93
+#z.trial      1 8710.6  1.888   0.169      0.11
+#sex.c        1 8719.2 10.459   0.001     -8.46
+#z.session    1 8719.1 10.360   0.001     -8.36
+```
+
+```{r}
+#remove manually the condition fixed effect from the model
+red<-glmer(choice_binary ~ z.age + z.trial + sex.c +z.session+
+        (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial+z.session|dog_id),
+         data=between.model.data, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+full<-between.model
+
+#compate the reduced and the complete models
+anova_result<-as.data.frame(anova(red, full, test="Chisq"))
+print (anova_result)
+
+#same results (not used in the report)
+```
+
+##First session
+```{r}
+between.model.data.1st <- xdata %>%
+  filter (session ==1)  %>% 
+  mutate(condition = fct_recode(condition,        
+                                "Present" = "present",
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away")) %>%
+  mutate(condition = fct_relevel(condition, "Present")) %>% 
+  mutate(z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         sex.c=
+           as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[4]), center=TRUE, scale= FALSE)))
+```
+
+```{r}
+#We run the model
+between.model.1st=glmer(choice_binary ~ condition + z.age + z.trial + sex.c+
+        (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial|dog_id),
+         data=between.model.data.1st, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#See the results
+round(summary(between.model.1st)$coefficients,3)
+summary(between.model.1st)$varcor
+
+#more precise p-value with post hoc
+emm <- emmeans(between.model.1st, ~ condition)
+
+# paired comparison with Present
+contrast(emm, method = "trt.vs.ctrl", ref = "Present", adjust = "bonferroni")
+
+#all paires comparison
+pairs(emm, adjust = "tukey")
+
+# Estimate Std. Error z value Pr(>|z|)
+#(Intercept)              0.240      0.086   2.793    0.005
+#conditionAbsent         -0.303      0.122  -2.490    0.013
+#conditionBack turned     0.197      0.125   1.580    0.114
+#conditionLooking away   -0.224      0.122  -1.839    0.066
+#z.age                    0.048      0.043   1.112    0.266
+#z.trial                 -0.037      0.044  -0.848    0.397
+#sex.c                    0.043      0.087   0.495    0.621
+# Groups Name            Std.Dev. Corr                       
+# dog_id (Intercept)     0.000000                            
+#        condition.abs.c 0.133307    NaN                     
+#        condition.bt.c  0.227023    NaN  1.000              
+#        condition.la.c  0.125021    NaN -1.000 -1.000       
+#        z.trial         0.092966    NaN  1.000  1.000 -1.000
+
+#Bonferroni
+# contrast               estimate    SE  df z.ratio p.value
+# Absent - Present         -0.303 0.122 Inf  -2.490  0.0383
+# Back turned - Present     0.197 0.125 Inf   1.580  0.3425
+# Looking away - Present   -0.224 0.122 Inf  -1.839  0.1978
+
+#Tukey
+ #contrast                   estimate    SE  df z.ratio p.value
+ #Present - Absent             0.3028 0.122 Inf   2.490  0.0615
+ #Present - Back turned       -0.1973 0.125 Inf  -1.580  0.3902
+ #Present - Looking away       0.2240 0.122 Inf   1.839  0.2550
+ #Absent - Back turned        -0.5000 0.123 Inf  -4.080  0.0003
+ #Absent - Looking away       -0.0787 0.124 Inf  -0.637  0.9202
+ #Back turned - Looking away   0.4213 0.128 Inf   3.301  0.0053
+```
+
+```{r}
+#We remove every fixed effect one by one and compared it to the complete model with a Chi² test (likelihood ratio test) 
+drop.between.model <- round(drop1(between.model.1st, test="Chisq"),4)
+
+aic_between_model <- drop.between.model[1, "AIC"] #AIC of the complet model
+aic_between_model_drop <- drop.between.model[, "AIC"][-1] #AIC of the reduced models
+delta_aic_between_model <- c(round(aic_between_model - aic_between_model_drop, 2))  #ΔAIC between full and reduced model
+
+#We do a table to summary of all this results
+drop_results <- drop.between.model
+drop_results$delta_AIC <- c(NA, delta_aic_between_model) # add the column delta AIC
+drop_results
+
+#         npar    AIC     LRT Pr(Chi) delta_AIC
+#<none>         3089.6                          
+#condition    3 3102.1 18.5345  0.0003    -12.53
+#z.age        1 3087.9  0.4018  0.5262      1.60
+#z.trial      1 3087.5 -0.0690  1.0000      2.07
+#sex.c        1 3087.8  0.2450  0.6206      1.75
+
+```
+
+```{r}
+#remove manually the condition fixed effect from the model
+red.1st<-glmer(choice_binary ~ z.age + z.trial + sex.c+
+        (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial|dog_id),
+         data=between.model.data.1st, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+round(summary(red.1st)$coefficients,2)
+summary(red.1st)$varcor
+full.1st<-between.model.1st
+
+#compate the reduced and the complete models
+anova_result<-as.data.frame(anova(red.1st, full.1st, test="Chisq"))
+print (anova_result)
+
+#same results (not used in the report)
+```
+
+##Second session
+```{r}
+between.model.data.2nd <- xdata %>%
+  filter (session ==2)  %>% 
+  mutate(condition = fct_recode(condition,        
+                                "Present" = "present",
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away")) %>%
+  mutate(condition = fct_relevel(condition, "Present")) %>% 
+  mutate(z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         sex.c=
+           as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[4]), center=TRUE, scale= FALSE)))
+
+```
+
+```{r}
+#We run the model
+between.model.2nd=glmer(choice_binary ~ condition + z.age + z.trial + sex.c+
+        (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial|dog_id),
+         data=between.model.data.2nd, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#See the results
+round(summary(between.model.2nd)$coefficients,2)
+summary(between.model.2nd)$varcor
+
+#more precise p-value with post hoc
+emm <- emmeans(between.model.2nd, ~ condition)
+
+# paired comparison with Present
+contrast(emm, method = "trt.vs.ctrl", ref = "Present", adjust = "bonferroni")
+
+#all paires comparison
+pairs(emm, adjust = "tukey")
+
+
+#                      Estimate Std. Error z value Pr(>|z|)
+#(Intercept)               0.36       0.09    4.02     0.00
+#conditionAbsent          -0.08       0.13   -0.67     0.50
+#conditionBack turned     -0.02       0.13   -0.15     0.88
+#conditionLooking away    -0.38       0.13   -3.04     0.00
+#z.age                     0.00       0.04   -0.01     0.99
+#z.trial                  -0.07       0.04   -1.52     0.13
+#sex.c                    -0.04       0.09   -0.49     0.62
+# Groups Name            Std.Dev. Corr                       
+# dog_id (Intercept)     0.000000                            
+#        condition.abs.c 0.133307    NaN                     
+#        condition.bt.c  0.227023    NaN  1.000              
+#        condition.la.c  0.125021    NaN -1.000 -1.000       
+#        z.trial         0.092966    NaN  1.000  1.000 -1.000
+# contrast               estimate    SE  df z.ratio p.value
+# Absent - Present        -0.0842 0.125 Inf  -0.671  1.0000
+# Back turned - Present   -0.0189 0.126 Inf  -0.150  1.0000
+# Looking away - Present  -0.3797 0.125 Inf  -3.035  0.0072
+
+#Tukey
+ #contrast                   estimate    SE  df z.ratio p.value
+ #Present - Absent             0.0842 0.125 Inf   0.671  0.9080
+ #Present - Back turned        0.0189 0.126 Inf   0.150  0.9988
+ #Present - Looking away       0.3797 0.125 Inf   3.035  0.0128
+ #Absent - Back turned        -0.0653 0.125 Inf  -0.520  0.9542
+ #Absent - Looking away        0.2955 0.125 Inf   2.370  0.0829
+ #Back turned - Looking away   0.3608 0.125 Inf   2.890  0.0201
+```
+
+```{r}
+#We remove every fixed effect one by one and compared it to the complete model with a Chi² test (likelihood ratio test) 
+drop.between.model <- round(drop1(between.model.2nd, test="Chisq"),5)
+
+aic_between_model <- drop.between.model[1, "AIC"] #AIC of the complet model
+aic_between_model_drop <- drop.between.model[, "AIC"][-1] #AIC of the reduced models
+delta_aic_between_model <- c(round(aic_between_model - aic_between_model_drop, 2))  #ΔAIC between full and reduced model
+
+#We do a table to summary of all this results
+drop_results <- drop.between.model
+drop_results$delta_AIC <- c(NA, delta_aic_between_model) # add the column delta AIC
+drop_results
+
+#         npar    AIC     LRT Pr(Chi) delta_AIC
+#<none>         2894.0                          
+#condition    3 2893.2  5.2839 0.15215      0.72
+#z.age        1 2886.1 -5.9051 1.00000      7.91
+#z.trial      1 2888.5 -3.4551 1.00000      5.46
+#sex.c        1 2886.2 -5.7837 1.00000      7.78
+
+```
+
+```{r}
+#remove manually the condition fixed effect from the model
+red<-glmer(choice_binary ~ z.age + z.trial + sex.c+
+        (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial|dog_id),
+         data=between.model.data.2nd, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+full<-between.model.2nd
+
+#compate the reduced and the complete models
+anova_result<-as.data.frame(anova(red, full, test="Chisq"))
+print (anova_result)
+
+#same results (not used for the report)
+```
+
+##Third session
+```{r}
+between.model.data.3rd <- xdata %>%
+  filter (session ==3)  %>% 
+  mutate(condition = fct_recode(condition,        
+                                "Present" = "present",
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away")) %>%
+  mutate(condition = fct_relevel(condition, "Present")) %>% 
+  mutate(z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         sex.c=
+           as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[4]), center=TRUE, scale= FALSE)))
+
+```
+
+```{r}
+#We run the model
+between.model.3rd=glmer(choice_binary ~ condition + z.age + z.trial + sex.c+
+        (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial|dog_id),
+         data=between.model.data.3rd, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#See the results
+round(summary(between.model.3rd)$coefficients,2)
+summary(between.model.3rd)$varcor
+
+#more precise p-value with post hoc
+emm <- emmeans(between.model.3rd, ~ condition)
+
+# paired comparison with Present
+contrast(emm, method = "trt.vs.ctrl", ref = "Present", adjust = "bonferroni")
+
+#all paires comparison
+pairs(emm, adjust = "tukey")
+
+#                      Estimate Std. Error z value Pr(>|z|)
+#(Intercept)               0.17       0.09    1.87     0.06
+#conditionAbsent           0.28       0.13    2.17     0.03
+#conditionBack turned      0.08       0.13    0.63     0.53
+#conditionLooking away    -0.25       0.13   -1.99     0.05
+#z.age                    -0.04       0.05   -0.80     0.42
+#z.trial                  -0.01       0.05   -0.22     0.83
+#sex.c                    -0.10       0.09   -1.13     0.26
+
+# Groups Name            Std.Dev.   Corr                       
+# dog_id (Intercept)     8.8341e-07                            
+#        condition.abs.c 5.7604e-06  0.764                     
+#        condition.bt.c  2.4719e-06 -0.383  0.304              
+#        condition.la.c  4.0814e-06 -0.116  0.552  0.962       
+#        z.trial         3.9182e-07  0.320  0.809  0.685  0.841
+# contrast               estimate    SE  df z.ratio p.value
+# Absent - Present          0.277 0.128 Inf   2.169  0.0903
+# Back turned - Present     0.080 0.127 Inf   0.631  1.0000
+# Looking away - Present   -0.251 0.126 Inf  -1.986  0.1410
+
+#Tukey
+# contrast                   estimate    SE  df z.ratio p.value
+# Present - Absent             -0.277 0.128 Inf  -2.169  0.1320
+# Present - Back turned        -0.080 0.127 Inf  -0.631  0.9222
+# Present - Looking away        0.251 0.126 Inf   1.986  0.1931
+# Absent - Back turned          0.197 0.128 Inf   1.540  0.4137
+# Absent - Looking away         0.528 0.128 Inf   4.134  0.0002
+# Back turned - Looking away    0.331 0.127 Inf   2.614  0.0444
+
+```
+
+```{r}
+#We remove every fixed effect one by one and compared it to the complete model with a Chi² test (likelihood ratio test) 
+drop.between.model <- round(drop1(between.model.3rd, test="Chisq"),5)
+
+aic_between_model <- drop.between.model[1, "AIC"] #AIC of the complet model
+aic_between_model_drop <- drop.between.model[, "AIC"][-1] #AIC of the reduced models
+delta_aic_between_model <- c(round(aic_between_model - aic_between_model_drop, 2))  #ΔAIC between full and reduced model
+
+#We do a table to summary of all this results
+drop_results <- drop.between.model
+drop_results$delta_AIC <- c(NA, delta_aic_between_model) # add the column delta AIC
+drop_results
+
+#          npar    AIC     LRT Pr(Chi) delta_AIC
+#<none>         2798.9                          
+#condition    3 2810.6 17.7232 0.00050    -11.72
+#z.age        1 2797.5  0.6413 0.42324      1.36
+#z.trial      1 2796.9  0.0466 0.82908      1.95
+#sex.c        1 2798.1  1.2816 0.25761      0.72
+
+```
+
+```{r}
+#remove manually the condition fixed effect from the model
+red<-glmer(choice_binary ~ z.age + z.trial + sex.c+
+        (1+condition.abs.c+condition.bt.c+condition.la.c+z.trial|dog_id),
+         data=between.model.data.3rd, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+full<-between.model.3rd
+
+#compate the reduced and the complete models
+anova_result<-as.data.frame(anova(red, full, test="Chisq"))
+print (anova_result)
+
+#same results (not used for the report)
+```
+
+#Preference
+##For a cup
+###Overall dogs
+```{r}
+#We should have the same probability of choice for the cups 1, 2, 3, 4
+pref_cup <- table (xdata$choice_number)
+number_of_choice = sum (pref_cup)
+test_pref_cup <- chisq.test (pref_cup)
+test_pref_cup                                
+
+prop.table(pref_cup)
+
+pairwise.prop.test(x = pref_cup, n= rep(100, 4), p.adjust.method = "bonferroni")
+
+# preference : 2>1>3>4
+#(not used in the report)
+
+```
+
+###Individualy
+```{r}
+dog_pref_cup <- xdata %>%
+  group_by(dog_name) %>%
+  summarise(
+    dog_name = dog_name[1],
+    n_trials = n(),
+    choice_table = list(table(choice_number)),
+    .groups = "drop") %>%
+  mutate(chisq_test = lapply(choice_table, function(x) if(length(x) > 1)     chisq.test(x) else NA),
+    p_value = sapply(chisq_test, function(x) if (!is.na(x)[1]) x$p.value else NA),
+    p_value = round(p_value, 3),
+    significant = ifelse(!is.na(p_value), p_value < 0.05, FALSE),
+    preferred_cup = ifelse(significant,
+                           sapply(choice_table, function(x) names(which.max(x))),
+                           NA))
+dog_pref_cup
+
+#(not used in the report)
+```
+
+##For a side/experimenter
+###Overall dogs
+```{r}
+#On all dogs, GLMM
+xdata$choice_bin <- ifelse(xdata$choice_LR == "L", 1, 0) #results : choice for L
+table(xdata$choice_LR, xdata$choice_bin)
+
+model <- glmer(choice_bin ~ 1 + (1 | dog_id), 
+               data = xdata, 
+               family = binomial)
+summary(model)
+
+#            Estimate Std. Error z value Pr(>|z|)  
+#(Intercept) 0.2697     0.1050   2.569   0.0102 *
+
+plogis(fixef(model)[1])
+plogis(confint(model, parm = "(Intercept)", method = "Wald"))
+
+#Estimated probability: 0.5670099
+#95% Confidence intervalle of probability:  0.51597328 - 0.6166632
+
+```
+
+###Individualy
+```{r}
+#By session
+#We are going to use a binomial test
+dog_pref_LR <- xdata %>%
+   filter(!is.na(choice_LR)) %>%
+  group_by(dog_name,session) %>%
+  summarise(n_trials = n(),
+    n_L = sum(choice_LR == "L"),
+    n_R = sum(choice_LR == "R"),
+    .groups = "drop") %>%
+  mutate(binom_test = purrr::pmap(list(n_L, n_trials), ~ binom.test(..1, ..2, p = 0.5)),
+    p_value = sapply(binom_test, function(x) x$p.value),
+    p_value = round(p_value, 3),
+    significant = p_value < 0.05,
+    preferred_side = case_when(significant & n_L > n_R ~ "L",significant & n_R > n_L ~ "R",TRUE ~ NA_character_))
+dog_pref_LR
+
+```
+
+```{r}
+#Overall
+#We are going to use a binomial test
+dog_pref_LR <- xdata %>%
+   filter(!is.na(choice_LR)) %>%
+  group_by(dog_name) %>%
+  summarise(n_trials = n(),
+    n_L = sum(choice_LR == "L"),
+    n_R = sum(choice_LR == "R"),
+    .groups = "drop") %>%
+  mutate(binom_test = purrr::pmap(list(n_L, n_trials), ~ binom.test(..1, ..2, p = 0.5)),
+    p_value = sapply(binom_test, function(x) x$p.value),
+    p_value = round(p_value, 3),
+    significant = p_value < 0.05,
+    preferred_side = case_when(significant & n_L > n_R ~ "L",significant & n_R > n_L ~ "R",TRUE ~ NA_character_))
+dog_pref_LR
+
+```
+
+##Does this influence our results ?
+###Removing the dogs that have a significant preference
+```{r}
+#List of the dogs having a significant side preference and in what sessions
+side_pref_dogs_session <- dog_pref_LR %>%
+  filter(significant == TRUE) %>%
+  select(dog_name, session)
+
+#Removing these data
+xdata_filtered <- xdata %>%
+  anti_join(side_pref_dogs_session, by = c("dog_name", "session"))
+```
+
+```{r}
+#Overall sessions, only test conditions, No side biais dogs
+test.data.overall<-xdata_filtered %>% 
+  filter(condition!="present") #we remove the control condition
+# Run the model
+iobm.overall.test=glmer(choice_binary ~ 1 + (1|dog_id), 
+      #~1 is the intercept, compares to the average of success overall dogs 
+      #no predictive variable, dog_id is set as a random variable, it means that each dogs can have a different number of success and we have multiple observations for eahc dog
+             data=test.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+      #"bobyqa" = optimizer, which is generally more robust and efficient
+      #optCtrl = increases the maximum number of function evaluations to 200,000 usefull if convergence is slow.
+
+confint_iobm.overall.test <- confint(iobm.overall.test, method = "Wald") #confidence intervalle
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit)) #fonction to go from OR to proba
+prob_intercept <- logit_to_prob(fixef(iobm.overall.test)[1]) #estimated probability
+confint_prob <- logit_to_prob(confint_iobm.overall.test["(Intercept)", ]) #intervalle of probability
+
+cat("Test Estimated probability:", round(prob_intercept, 3), "\n",
+    "Test 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.562 
+#95% Confidence intervalle of probability:  0.541 - 0.582 
+
+summary(iobm.overall.test)
+#p-value = 6.26e-09 ***
+#z-value =  5.81 
+#std error =  0.04256
+```
+
+```{r}
+#Overall sessions, Present condition, No side biais dogs
+present.data.overall<-xdata_filtered  %>% 
+  filter(condition=="present") 
+iobm.overall.present=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=present.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.overall.present <- confint(iobm.overall.present, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.overall.present)[1])
+confint_prob <- logit_to_prob(confint_iobm.overall.present["(Intercept)", ]) 
+
+cat("Present Estimated probability:", round(prob_intercept, 3), "\n",
+    "Present 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.584 
+#95% Confidence intervalle of probability: 0.544 - 0.624 
+
+summary(iobm.overall.present)
+#p-value = 5.38e-05 ***
+#z-value = 4.038
+#std error =  0.0843
+```
+
+```{r}
+#Overall sessions, Absent condition, No side biais dogs
+absent.data.overall<-xdata_filtered %>% 
+  filter(condition=="absent") 
+iobm.overall.absent=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=absent.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.overall.absent <- confint(iobm.overall.absent, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.overall.absent)[1])
+confint_prob <- logit_to_prob(confint_iobm.overall.absent["(Intercept)", ]) 
+
+cat("Absent Estimated probability:", round(prob_intercept, 3), "\n",
+    "Absent 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.566 
+#95% Confidence intervalle of probability: 0.525 - 0.606 
+
+summary(iobm.overall.absent)
+#p-value =  0.00158 **
+#z-value =  3.16 
+#std error =  0.08373
+```
+
+```{r}
+#Overall sessions, Back turned condition, No side biais dogs
+back.turned.data.overall<-xdata_filtered %>% 
+  filter(condition=="back_turned") 
+iobm.overall.back.turned=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=back.turned.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.overall.back.turned <- confint(iobm.overall.back.turned, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.overall.back.turned)[1])
+confint_prob <- logit_to_prob(confint_iobm.overall.back.turned["(Intercept)", ]) 
+
+cat("Back turned Estimated probability:", round(prob_intercept, 3), "\n",
+    "Back turned 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.62 
+#95% Confidence intervalle of probability:  0.587 - 0.652  
+
+summary(iobm.overall.back.turned)
+#p-value = 4.71e-12 ***
+#z-value =  6.914
+#std error = 0.07088
+```
+
+```{r}
+#Overall sessions, Looking away condition, No side biais dogs
+looking.away.data.overall<-xdata_filtered %>% 
+  filter(condition=="looking_away") 
+iobm.overall.looking.away=glmer(choice_binary ~ 1 + (1|dog_id), 
+             data=looking.away.data.overall, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+confint_iobm.overall.looking.away <- confint(iobm.overall.looking.away, method = "Wald") 
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_intercept <- logit_to_prob(fixef(iobm.overall.looking.away)[1])
+confint_prob <- logit_to_prob(confint_iobm.overall.looking.away["(Intercept)", ]) 
+
+cat("Looking away Estimated probability:", round(prob_intercept, 3), "\n",
+    "Looking away 95% Confidence intervalle of probability:", round(confint_prob[1], 3), "-", round(confint_prob[2], 3), "\n")
+#Estimated probability: 0.502 
+#95% Confidence intervalle of probability: 0.468 - 0.536  
+
+summary(iobm.overall.looking.away)
+#p-value = 0.918
+#z-value = 0.103
+#std error = 0.068966
+```
+
+###Correlation between that preference and the choice for the knower
+```{r}
+#We create a new variable with the rate of preference per dog and session and we will run a glmm model to see if the index of preference in one session has an impact on the result in the tested condition (so without "present", because the dog doesn't make a mistake even by chosing the guesser in this condition) in the same session
+
+#On both session, with the present condition
+##We create a Lateralization index that we scale and center
+pref.model.data <- xdata  %>%
+  group_by(dog_name, session) %>%
+  mutate(
+    sum_L = sum(choice_LR == "L", na.rm = TRUE),
+    sum_R = sum(choice_LR == "R", na.rm = TRUE),
+    total_trial = sum_L + sum_R,
+    pref_index = abs((sum_R - sum_L) / total_trial)) %>%
+  ungroup() %>%
+   mutate(condition = fct_recode(condition,        
+                                "Present" = "present",
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away")) %>%
+  mutate(condition = fct_relevel(condition, "Present")) %>% 
+  mutate(z.pref=as.vector(scale(pref_index, center = TRUE, scale=TRUE)),
+         z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         sex.c=
+           as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         z.session=as.vector(scale(session, center = TRUE, scale=TRUE)),
+         as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         condition.p.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[1]), center=TRUE, scale= FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[4]), center=TRUE, scale= FALSE)))
+
+##Run the model
+pref.model=glmer(choice_binary ~ condition+z.pref+z.age+z.trial+z.session+
+        (1 + condition.p.c+condition.abs.c+condition.bt.c+condition.la.c+z.pref+z.trial+z.session |dog_id),
+         data=pref.model.data, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#See the results
+round(summary(pref.model)$coefficients,2)
+#We do have a significant impact of lateralization index on choice binary when condition present is included 
+
+#We remove every fixed effect one by one and compared it to the complete model with a Chi² test (likelihood ratio test) 
+drop.pref.model <- round(drop1(pref.model, test="Chisq"),4)
+
+aic_pref_model <- drop.pref.model[1, "AIC"] #AIC of the complet model
+aic_pref_model_drop <- drop.pref.model[, "AIC"][-1] #AIC of the reduced models
+delta_aic_pref_model <- c(round(aic_pref_model - aic_pref_model_drop, 2))  #ΔAIC between full and reduced model
+
+#We do a table to summary of all this results
+drop_results <- drop.pref.model
+drop_results$delta_AIC <- c(NA, delta_aic_pref_model) # add the column delta AIC
+drop_results
+
+#                      Estimate Std. Error z value Pr(>|z|)
+#(Intercept)               0.27       0.06    4.61     0.00
+#conditionAbsent          -0.05       0.08   -0.63     0.53
+#conditionBack turned      0.08       0.08    1.01     0.31
+#conditionLooking away    -0.29       0.08   -3.52     0.00
+#z.pref                   -0.09       0.03   -3.03     0.00
+#z.age                     0.00       0.03    0.00     1.00
+#z.trial                  -0.04       0.03   -1.38     0.17
+#z.session                 0.03       0.03    1.21     0.23
+
+#          npar    AIC     LRT Pr(Chi) delta_AIC
+#<none>         8727.3                          
+#condition    3 8742.8 21.4982  0.0001    -15.50
+#z.pref       1 8734.6  9.2943  0.0023     -7.29
+#z.age        1 8725.3  0.0000  0.9971      2.00
+#z.trial      1 8727.2  1.8826  0.1700      0.12
+#z.session    1 8726.7  1.4645  0.2262      0.54
+
+```
+
+```{r}
+#On both session, without the present condition
+##We create a Lateralization index that we scale and center
+pref.model.data <- xdata %>%
+  filter(condition!="present") %>%
+  droplevels() %>% 
+  group_by(dog_name, session) %>%
+  mutate(
+    sum_L = sum(choice_LR == "L", na.rm = TRUE),
+    sum_R = sum(choice_LR == "R", na.rm = TRUE),
+    total_trial = sum_L + sum_R,
+    pref_index = abs((sum_R - sum_L) / total_trial)) %>%
+  ungroup() %>%
+   mutate(condition = fct_recode(condition,        
+                                "Absent" = "absent",
+                                "Back turned" = "back_turned", 
+                                "Looking away" = "looking_away")) %>%
+  mutate(z.pref=as.vector(scale(pref_index, center = TRUE, scale=TRUE)),
+         z.age=as.vector(scale(age, center = TRUE, scale=TRUE)),
+         z.trial=as.vector(scale(trial, center = TRUE, scale=TRUE)),
+         sex.c=
+           as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         z.session=as.vector(scale(session, center = TRUE, scale=TRUE)),
+         as.vector(scale(as.numeric(sex == "f"), center = TRUE, scale = FALSE)),
+         condition.abs.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[1]), center=TRUE, scale= FALSE)),
+         condition.bt.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[2]), center=TRUE, scale= FALSE)),
+         condition.la.c=
+           as.vector(scale(as.numeric(condition==levels(as.factor(condition))[3]), center=TRUE, scale= FALSE)))
+
+
+##Run the model
+pref.model=glmer(choice_binary ~ condition+z.pref+z.age+z.trial+z.session+
+        (1 + condition.abs.c+condition.bt.c+condition.la.c+z.pref+z.trial+z.session |dog_id),
+         data=pref.model.data, family=binomial, 
+         control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+#See the results
+round(summary(pref.model)$coefficients,2)
+#We don't have a significant effect by the lateralization index on choice binary in the test conditions 
+
+#We remove every fixed effect one by one and compared it to the complete model with a Chi² test (likelihood ratio test) 
+drop.pref.model <- round(drop1(pref.model, test="Chisq"),4)
+
+aic_pref_model <- drop.pref.model[1, "AIC"] #AIC of the complet model
+aic_pref_model_drop <- drop.pref.model[, "AIC"][-1] #AIC of the reduced models
+delta_aic_pref_model <- c(round(aic_pref_model - aic_pref_model_drop, 2))  #ΔAIC between full and reduced model
+
+#We do a table to summary of all this results
+drop_results <- drop.pref.model
+drop_results$delta_AIC <- c(NA, delta_aic_pref_model) # add the column delta AIC
+drop_results
+
+#                      Estimate Std. Error z value Pr(>|z|)
+#(Intercept)               0.21       0.06    3.61     0.00
+#conditionBack turned      0.13       0.08    1.69     0.09
+#conditionLooking away    -0.23       0.09   -2.55     0.01
+#z.pref                   -0.05       0.03   -1.63     0.10
+#z.age                     0.01       0.03    0.21     0.83
+#z.trial                  -0.05       0.03   -1.45     0.15
+#z.session                 0.04       0.03    1.24     0.21
+
+#          npar    AIC     LRT Pr(Chi) delta_AIC
+#<none>         6560.2                          
+#condition    2 6568.3 12.1732  0.0023     -8.17
+#z.pref       1 6553.9 -4.2554  1.0000      6.26
+#z.age        1 6550.8 -7.3722  1.0000      9.37
+#z.trial      1 6553.0 -5.1974  1.0000      7.20
+#z.session    1 6559.7  1.5452  0.2139      0.45
+
+```
+
+##Is this linked to the first succeded trial ?
+```{r}
+#We check if when a dog has a preference during one session for the L experimenter, he was rewarded during the test by the L experimenter in this session (#need to run side_pref_dogs_session before)
+ft_reward_pref <- xdata %>%
+  group_by(dog_name,session)%>%
+  mutate(reward_1st = (choice_binary == 1) | (condition == "present"))%>%
+  filter(row_number() == which(reward_1st)[1])%>%
+  left_join(dog_pref_LR %>% select(dog_name, session, preferred_side),
+            by = c("dog_name", "session"))%>%
+  mutate(match_preference = (choice_LR == preferred_side))
+ft_reward_pref
+
+#TRUE in match_preference means that it is the case
+#(not used in the report)
+
+```
+
+#Across the sessions
+##Creation of a fonction that can give the p-value of the correlation from any matrix
+```{r}
+#running this before the other correlations
+cor_pmat <- function(mat) 
+  {n <- ncol(mat)
+  p_mat <- matrix(NA, n, n) #empty matrix
+  colnames(p_mat) <- rownames(p_mat) <- colnames(mat) #same column/row names
+  for (i in 1:n) {for (j in 1:n) { #i=row, j=column
+    if (i != j)  #to avoid the correlation of a variable with itself
+      {test <- cor.test(mat[, i], mat[, j], use = "pairwise.complete.obs")
+      p_mat[i, j] <- test$p.value} 
+    else {p_mat[i, j] <- NA}}}
+  return(p_mat)}
+```
+
+##Correlation across the sessions, per condition
+```{r}
+#Average of choice binary in each condition and for each session
+cor_across_session_cond <- xdata %>%
+  group_by(dog_id, session, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = session, values_from = mean_choice,
+              names_prefix = "session_") #1 colonne per session
+
+cor_across_session_cond
+
+#we are going to make a loop testing for each condition
+conditions <- unique(cor_across_session_cond$condition) 
+for (cond in conditions) {
+  sub_data <- cor_across_session_cond %>% filter(condition == cond)
+  name_cols <- c("session_1", "session_2", "session_3")
+  if (all(name_cols %in% colnames(sub_data))) {
+    cat("\n--- Condition:", cond, "---\n")
+    sub_sessions <- sub_data %>%
+      dplyr::filter(if_all(all_of(name_cols), ~ !is.na(.))) %>% #we remove the dogs that didn't participate in all sessions
+      dplyr::select(all_of(name_cols)) %>% 
+      dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+      as.data.frame() #cor() only work with numeric so we convert the sessions columns as numeric
+    cor_matrix <- cor(sub_sessions, use = "pairwise.complete.obs", method = "pearson") #we use "pairwise.complete.obs" because we might have NA in some session for some dogs
+    print(cor_matrix)
+    p_matrix <- cor_pmat(sub_sessions) #to have the p-values
+    print(round(p_matrix, 4))
+    corrplot(cor_matrix, method = "color", type = "upper", 
+             p.mat = p_matrix, sig.level = 0.05, 
+             insig = "pch", pch.cex = 1.5, #cross indicate if it is not significant
+             tl.col = "black", tl.srt = 45,
+             title = paste("Correlation across sessions in condition:", cond), mar = c(0,0,2,0))}
+  else {message(paste("Condition", cond, "skipped: missing session columns"))}}
+
+#absent : 
+##S1-S2 : r=0.3162546, p=0.0036 ; 
+##S1-S3 : r=0.2190012, p=0.0467 ;
+##S2-S3 : r=0.3431540, p=0.0015 ;
+#back turned : 
+##S1-S2 : r=0.2947409, p=0.0068 ; 
+##S1-S3 : r=-0.07321406, p=0.5107 ;
+##S2-S3 : r=0.10072345, p=0.3649 ;
+#looking away : 
+##S1-S2 : r=0.3450892, p=0.0014 ; 
+##S1-S3 : r=0.3630635, p=0.0007 ;
+##S2-S3 : r=0.0695861, p=0.5319 ;
+#present :
+##S1-S2 : r=0.2374546, p=0.0307 ; 
+##S1-S3 : r=0.1590661, p=0.1509 ;
+##S2-S3 : r=0.3204789, p=0.0031
+```
+
+##Correlation across sessions, for test conditions
+```{r}
+#Average of choice binary for each session
+cor_across_session_tot <- xdata %>%
+  filter(condition !="present")%>%
+  group_by(dog_name, session) %>%
+  summarise(mean_choice = mean(choice_binary, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = session, values_from = mean_choice,
+              names_prefix = "session_")
+sub_sessions <- cor_across_session_tot[, c("session_1", "session_2", "session_3")] %>%
+  dplyr::select(session_1, session_2,session_3) %>%
+  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+  dplyr::filter(if_all(everything(), ~ !is.na(.))) %>% #we only keep the dogs that participated in all sessions
+  as.data.frame() 
+
+#correlations
+corr_matrix <- cor(sub_sessions, use = "pairwise.complete.obs", method = "pearson")
+print(corr_matrix)
+
+#p-values
+p_matrix <- cor_pmat(sub_sessions)
+print(round(p_matrix, 4))
+
+#plot
+corrplot(corr_matrix,method = "color", type = "upper",
+         p.mat = p_matrix, sig.level = 0.05,
+         insig = "pch", pch.cex = 1.5, 
+         tl.col = "black", tl.srt = 45,
+         title = "Correlation across sessions (all conditions)",
+         mar = c(0, 0, 2, 0))
+
+##S1-S2 : r=0.3280824, p=0.0028 ; 
+##S1-S3 : r=0.04445659, p=0.6935 ;
+##S2-S3 : r=-0.02483840, p=0.8258 ;
+```
+
+##Plot performance across session
+```{r}
+#Between session 1 and 2
+scores_wide <- xdata %>%
+  group_by(dog_name, condition, session) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = session, values_from = mean_score, names_prefix = "session_") %>%
+  filter(!is.na(session_1) & !is.na(session_2))  %>%
+  mutate(condition = str_replace_all(condition, "_", " "),
+         condition = str_to_title(condition))
+
+# Calcul de la densité avec scores entre 0 et 1
+dens <- with(scores_wide, MASS::kde2d(session_1, session_2, n = 100))
+
+get_density <- function(x, y, dens){
+  ix <- findInterval(x, dens$x)
+  iy <- findInterval(y, dens$y)
+  mapply(function(i, j) ifelse(i > 0 & j > 0, dens$z[i,j], NA), ix, iy)}
+
+scores_wide$density <- get_density(scores_wide$session_1, scores_wide$session_2, dens)
+
+# Plot per condition
+plot_by_condition_1_2<- ggplot(scores_wide, aes(x = session_1, y = session_2)) +
+  geom_point(aes(color = density, size = density)) +
+  scale_color_gradient2(low = "skyblue",mid = "plum", high = "red",
+  midpoint = 4) +
+  scale_size(range = c(1, 5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
+  facet_wrap(~ condition) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +  
+  labs(x = "Percentage of choice for the Knower the first session",
+       y = "Percentage of choice for the Knower the second session",
+       color = "Number of dogs overlapping") +
+  theme_minimal()+
+    theme(
+    axis.title.x = element_text(size=15),
+    axis.title.y = element_text(size=15),
+    strip.text = element_text(size = 15))
+
+# Plot with all test condition pooled together
+scores_wide_pooled <- scores_wide %>%
+  filter(condition != "Present")
+
+plot_pooled_1_2 <- ggplot(scores_wide_pooled, aes(x = session_1, y = session_2)) +
+  geom_point(aes(color = density, size = density)) +
+  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red",
+                        midpoint = 4, , guide = "none") +
+  scale_size(range = c(1, 5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
+  # Suppression de facet_wrap pour tout mettre dans un seul plot
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +  
+  labs(x = "Percentage of choice for the Knower in the first session",
+       y = "Percentage of choice for the Knower in the second session") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(size=15),
+    axis.title.y = element_text(size=15))
+
+```
+
+plot_pooled_1_2+ plot_by_condition_1_2 + plot_layout(ncol = 2)
+
+```{r}
+#Between session 1 and 3
+scores_wide <- xdata %>%
+  group_by(dog_name, condition, session) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = session, values_from = mean_score, names_prefix = "session_") %>%
+  filter(!is.na(session_1) & !is.na(session_3))  %>%
+  mutate(condition = str_replace_all(condition, "_", " "),
+         condition = str_to_title(condition))
+
+# Calcul de la densité avec scores entre 0 et 1
+dens <- with(scores_wide, MASS::kde2d(session_1, session_3, n = 100))
+
+get_density <- function(x, y, dens){
+  ix <- findInterval(x, dens$x)
+  iy <- findInterval(y, dens$y)
+  mapply(function(i, j) ifelse(i > 0 & j > 0, dens$z[i,j], NA), ix, iy)}
+
+scores_wide$density <- get_density(scores_wide$session_1, scores_wide$session_3, dens)
+
+# Plot per condition
+plot_by_condition_1_3<- ggplot(scores_wide, aes(x = session_1, y = session_3)) +
+  geom_point(aes(color = density, size = density)) +
+  scale_color_gradient2(low = "skyblue",mid = "plum", high = "red",
+  midpoint = 4) +
+  scale_size(range = c(1, 5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
+  facet_wrap(~ condition) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +  
+  labs(x = "Percentage of choice for the Knower the first session",
+       y = "Percentage of choice for the Knower the third session",
+       color = "Number of dogs overlapping") +
+  theme_minimal()+
+    theme(
+    axis.title.x = element_text(size=15),
+    axis.title.y = element_text(size=15),
+    strip.text = element_text(size = 15))
+
+# Plot with all test condition pooled together
+scores_wide_pooled <- scores_wide %>%
+  filter(condition != "Present")
+
+plot_pooled_1_3 <- ggplot(scores_wide_pooled, aes(x = session_1, y = session_3)) +
+  geom_point(aes(color = density, size = density)) +
+  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red",
+                        midpoint = 4, , guide = "none") +
+  scale_size(range = c(1, 5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
+  # Suppression de facet_wrap pour tout mettre dans un seul plot
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +  
+  labs(x = "Percentage of choice for the Knower in the first session",
+       y = "Percentage of choice for the Knower in the third session") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(size=15),
+    axis.title.y = element_text(size=15))
+
+```
+
+plot_pooled_1_3+ plot_by_condition_1_3 + plot_layout(ncol = 2)
+
+```{r}
+#Between session 2 and 3
+scores_wide <- xdata %>%
+  group_by(dog_name, condition, session) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = session, values_from = mean_score, names_prefix = "session_") %>%
+  filter(!is.na(session_2) & !is.na(session_3))  %>%
+  mutate(condition = str_replace_all(condition, "_", " "),
+         condition = str_to_title(condition))
+
+# Calcul de la densité avec scores entre 0 et 1
+dens <- with(scores_wide, MASS::kde2d(session_2, session_3, n = 100))
+
+get_density <- function(x, y, dens){
+  ix <- findInterval(x, dens$x)
+  iy <- findInterval(y, dens$y)
+  mapply(function(i, j) ifelse(i > 0 & j > 0, dens$z[i,j], NA), ix, iy)}
+
+scores_wide$density <- get_density(scores_wide$session_2, scores_wide$session_3, dens)
+
+# Plot per condition
+plot_by_condition_2_3<- ggplot(scores_wide, aes(x = session_2, y = session_3)) +
+  geom_point(aes(color = density, size = density)) +
+  scale_color_gradient2(low = "skyblue",mid = "plum", high = "red",
+  midpoint = 4) +
+  scale_size(range = c(1, 5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
+  facet_wrap(~ condition) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +  
+  labs(x = "Percentage of choice for the Knower the second session",
+       y = "Percentage of choice for the Knower the third session",
+       color = "Number of dogs overlapping") +
+  theme_minimal()+
+    theme(
+    axis.title.x = element_text(size=15),
+    axis.title.y = element_text(size=15),
+    strip.text = element_text(size = 15))
+
+# Plot with all test condition pooled together
+scores_wide_pooled <- scores_wide %>%
+  filter(condition != "Present")
+
+plot_pooled_2_3 <- ggplot(scores_wide_pooled, aes(x = session_2, y = session_3)) +
+  geom_point(aes(color = density, size = density)) +
+  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red",
+                        midpoint = 4, , guide = "none") +
+  scale_size(range = c(1, 5), guide = "none") +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed") +
+  # Suppression de facet_wrap pour tout mettre dans un seul plot
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +  
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +  
+  labs(x = "Percentage of choice for the Knower in the second session",
+       y = "Percentage of choice for the Knower in the third session") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(size=15),
+    axis.title.y = element_text(size=15))
+
+```
+
+plot_pooled_2_3+ plot_by_condition_2_3 + plot_layout(ncol = 2)
+
+#Across the condition
+```{r}
+#overall session
+cor_across_condition_tot <- xdata %>%
+  group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = condition, values_from = mean_choice)
+sub_conditions <- cor_across_condition_tot[, -1] %>%
+  dplyr::select(present, absent, back_turned, looking_away) %>%
+  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+  as.data.frame() 
+
+#correlations
+corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
+print(corr_matrix)
+
+#                 present      absent back_turned looking_away
+#present       1.00000000  0.17521016  0.02273298  -0.06261127
+#absent        0.17521016  1.00000000  0.09860027  -0.15824530
+#back_turned   0.02273298  0.09860027  1.00000000  -0.06967076
+#looking_away -0.06261127 -0.15824530 -0.06967076   1.00000000
+
+#p_values
+p_matrix <- cor_pmat(sub_conditions)
+print(round(p_matrix, 4))
+
+#             present absent back_turned looking_away
+#present           NA 0.0930      0.8288       0.5510
+#absent        0.0930     NA      0.3471       0.1298
+#back_turned   0.8288 0.3471          NA       0.5069
+#looking_away  0.5510 0.1298      0.5069           NA
+
+colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
+rownames(corr_matrix) <- colnames(corr_matrix)
+
+```
+
+corrplot(corr_matrix, method = "color",
+  type = "upper",
+  addCoef.col = "black", 
+  tl.col = "black",      
+  col = colorRampPalette(c("#2166AC", "#FFFFFF","#B2182B"))(200),  
+  number.cex = 0.8,  
+  tl.srt = 25)
+
+```{r}
+#First session
+cor_across_condition_tot <- xdata %>%
+   filter (session == 1)  %>%
+  group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = condition, values_from = mean_choice)
+sub_conditions <- cor_across_condition_tot[, -1] %>%
+  dplyr::select(present, absent, back_turned, looking_away) %>%
+  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+  as.data.frame() 
+
+#correlations
+corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
+print(corr_matrix)
+
+#                  present      absent  back_turned looking_away
+#present       1.000000000  0.04795625 -0.009347072   0.00824318
+#absent        0.047956253  1.00000000  0.070480211  -0.05133300
+#back_turned  -0.009347072  0.07048021  1.000000000  -0.11931176
+#looking_away  0.008243180 -0.05133300 -0.119311760   1.00000000
+
+#p_values
+p_matrix <- cor_pmat(sub_conditions)
+print(round(p_matrix, 4))
+
+#             present absent back_turned looking_away
+#present           NA 0.6480      0.9291       0.9375
+#absent        0.6480     NA      0.5020       0.6251
+#back_turned   0.9291 0.5020          NA       0.2547
+#looking_away  0.9375 0.6251      0.2547           NA
+
+colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
+rownames(corr_matrix) <- colnames(corr_matrix)
+
+```
+
+corrplot( corr_matrix, method = "color",
+  type = "upper",
+  addCoef.col = "black", 
+  tl.col = "black",      
+  col = colorRampPalette(c("#2166AC", "#FFFFFF","#B2182B"))(200),  
+  number.cex = 0.8,  
+  tl.srt = 25)
+
+```{r}
+#Second session
+cor_across_condition_tot <- xdata %>%
+  filter (session == 2)  %>%
+  group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = condition, values_from = mean_choice)
+sub_conditions <- cor_across_condition_tot[, -1] %>%
+  dplyr::select(present, absent, back_turned, looking_away) %>%
+  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+  as.data.frame() 
+
+#correlations
+corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
+print(corr_matrix)
+
+#                 present       absent back_turned looking_away
+#present       1.00000000  0.323768403  0.04474074 -0.071566156
+#absent        0.32376840  1.000000000  0.20494088 -0.004694366
+#back_turned   0.04474074  0.204940881  1.00000000  0.012577528
+#looking_away -0.07156616 -0.004694366  0.01257753  1.000000000
+
+#p_values
+p_matrix <- cor_pmat(sub_conditions)
+print(round(p_matrix, 4))
+
+#             present absent back_turned looking_away
+#present           NA 0.0022      0.6807       0.5101
+#absent        0.0022     NA      0.0569       0.9656
+#back_turned   0.6807 0.0569          NA       0.9080
+#looking_away  0.5101 0.9656      0.9080           NA
+
+colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
+rownames(corr_matrix) <- colnames(corr_matrix)
+
+```
+
+
+corrplot( corr_matrix, method = "color",
+  type = "upper",
+  tl.col = "black",  
+  addCoef.col = "black", 
+  col = colorRampPalette(c("#2166AC", "#FFFFFF","#B2182B"))(200),  
+  number.cex = 0.8,  
+  tl.srt = 25) 
+text(x=2.05, y=4.25, labels="*", col="black", cex=2)
+
+```{r}
+#Third session
+cor_across_condition_tot <- xdata %>%
+  filter (session == 3)  %>%
+  group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = condition, values_from = mean_choice)
+sub_conditions <- cor_across_condition_tot[, -1] %>%
+  dplyr::select(present, absent, back_turned, looking_away) %>%
+  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
+  as.data.frame() 
+
+#correlations
+corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
+print(corr_matrix)
+
+#                 present      absent back_turned looking_away
+#present       1.00000000  0.06055250  0.03553782  -0.23659223
+#absent        0.06055250  1.00000000 -0.02379328  -0.01707701
+#back_turned   0.03553782 -0.02379328  1.00000000  -0.06190879
+#looking_away -0.23659223 -0.01707701 -0.06190879   1.00000000
+
+#p_values
+p_matrix <- cor_pmat(sub_conditions)
+print(round(p_matrix, 4))
+
+#             present absent back_turned looking_away
+#present           NA 0.5843      0.7483       0.0303
+#absent        0.5843     NA      0.8299       0.8775
+#back_turned   0.7483 0.8299          NA       0.5759
+#looking_away  0.0303 0.8775      0.5759           NA
+
+colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
+rownames(corr_matrix) <- colnames(corr_matrix)
+
+```
+
+
+corrplot( corr_matrix, method = "color",
+  type = "upper",
+  tl.col = "black",  
+  addCoef.col = "black", 
+  col = colorRampPalette(c("#2166AC", "#FFFFFF","#B2182B"))(200),  
+  number.cex = 0.8,  
+  tl.srt = 25) 
+text(x=4.05, y=4.25, labels="*", col="black", cex=2)
+
+#Split-half reliability
+```{r}
+xdata$split_half <- ifelse(xdata$trial %% 2 == 0, "even", "odd")
+
+#Compute mean scores for odd and even trials per subject and condition (pooled across sessions)
+odd_even_summary <- xdata %>%
+  group_by(dog_name) %>%
+  filter(n_distinct(session) == 2) %>%  # only on dogs who came at both session
+  ungroup() %>%
+  mutate(split_half = ifelse(trial %% 2 == 0, "even", "odd")) %>%
+  group_by(dog_name, condition, split_half) %>%
+  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = 'drop') %>%
+  pivot_wider(names_from = split_half, values_from = mean_score)
+
+#Calculate Pearson correlation (split-half reliability) for each condition
+condition_cor <- odd_even_summary %>%
+  group_by(condition) %>%
+  summarise(
+    cor_test = list(cor.test(odd, even, use = "complete.obs", method = "pearson")),
+    .groups = "drop") %>%
+  mutate(
+    condition_r = sapply(cor_test, function(x) x$estimate),
+    condition_p = sapply(cor_test, function(x) x$p.value),
+    condition_spearman_brown = (2 * r) / (1 + r)) %>%     # Spearman-Brown correction : To estimate the full-test reliability based on the split-half
+  select(condition, r, p_value, spearman_brown)
+
+#Also compute the correlation pooled across all conditions
+#overall_split_half_r <- cor(odd_even_summary$odd, odd_even_summary$even, use = "complete.obs")
+overall_test <- cor.test(
+  odd_even_summary$odd,
+  odd_even_summary$even,
+  use = "complete.obs",
+  method = "pearson")
+overall_r <- overall_test$estimate
+overall_p <- overall_test$p.value
+overall_spearman_brown <- (2 * overall_r) / (1 + overall_r)
+
+cat("Overall split-half r:", overall_r, "\n")
+cat("p-value:", overall_p, "\n")
+cat("Spearman-Brown corrected reliability:", overall_spearman_brown, "\n")
+
+#Overall split-half reliability (r): 0.1239914 
+#Spearman-Brown corrected reliability: 0.220627 
+#p-value : 0.5295972 
+
+#For each condition 
+#Absent : 
+#split-half reliability (r): 0.01578208 
+#Spearman-Brown corrected reliability: 0.03107375 
+#p-value : 0.9732108
+#Back turned : 
+#split-half reliability (r): -0.07617081 
+#Spearman-Brown corrected reliability: -0.16490238 
+#p-value : 0.8710632
+#Looking away : 
+#split-half reliability (r): 0.56714591 
+#Spearman-Brown corrected reliability: 0.72379464 
+#p-value : 0.1842421
+#Present : 
+#split-half reliability (r): -0.02964445 
+#Spearman-Brown corrected reliability: -0.06110018
+#p-value : 0.9496961
+```
+
+#Stability  
+```{r}
+#Code from Lucrezia Lonardo
+m.stab.c <- glmm.model.stab(model.res = between.model)
+m.stab.c$detailed$warnings
+as.data.frame(round(m.stab.c$summary[, -1], 4))
+
+m.stab.plot(round(m.stab.c$summary[, -1], 2))
+
+#orig     min     max
+#(Intercept)	0.2631	0.2467	0.2787
+#conditionAbsent	-0.0520	-0.0744	-0.0338
+#conditionBack turned	0.0766	0.0554	0.0979
+#conditionLooking away	-0.2891	-0.3094	-0.2602
+#z.age	0.0073	-0.0012	0.0129
+#z.trial	-0.0406	-0.0497	-0.0343
+#sex.c	-0.0213	-0.0579	-0.0089
+#z.session	0.0151	0.0096	0.0212
+
+```
+
+#Intervalle
+```{r}
+#Code from Lucrezia Lonardo
+mm1_choice.ci=boot.glmm.pred(model.res=between.model, excl.warnings=F,
+nboots=1000, para=T, n.cores="all-1", resol=1000, level=0.95)
+
+round(mm1_choice.ci$ci.estimates,3)
+
+#orig    X2.5.   X97.5.
+#(Intercept)	0.263	0.152	0.382	
+#conditionAbsent	-0.052	-0.211	0.103	
+#conditionBack turned	0.077	-0.083	0.227	
+#conditionLooking away	-0.289	-0.456	-0.126	
+#z.age	0.007	-0.051	0.065	
+#z.trial	-0.041	-0.101	0.019	
+#sex.c	-0.021	-0.129	0.095	
+#z.session	0.015	-0.039	0.065	
+```
+
+#Inter-observer reliability (choice - binary variable, repeated obs. per subj)
+#(DATA NOT AVAILABLE)
+```{r}
+#Code from Lucrezia Lonardo
+#read in reliability scorings
+reliab.data <- read_delim(file.choose(), delim = ",", locale = locale(decimal_mark = "."))
+reliab.data<- reliab.data %>%
+  mutate(original_code_fct=as.factor(original_code),
+         recoding_fct=as.factor(recoding))
+
+str(reliab.data)
+unique(levels(as.factor(reliab.data$dog_name))) #60 dogs coded
+which(is.na(reliab.data$original_code)) #contains one NA, recoded as missing to calculate % agreement
+
+reliab.data$original_code[is.na(reliab.data$original_code)] <- "missing"
+
+#Calculate Percentage Agreement
+percentage_agreement <- sum(reliab.data$recoding == reliab.data$original_code, na.rm = TRUE) / sum(!is.na(reliab.data$recoding) & !is.na(reliab.data$original_code)) * 100
+percentage_agreement #99.52925
+
+library(tidyr)
+long.reliab.data <- pivot_longer(reliab.data, cols = c(recoding, original_code),
+                          names_to = "rater", values_to = "rating")
+
+str(long.reliab.data)
+summary(long.reliab.data$rating)
+
+table(long.reliab.data$rating)
+str(long.reliab.data$rating)
+long.reliab.data$rating <- factor(long.reliab.data$rating, levels = c("L", "R"))
+
+#binomial GLMM to test if the rater has an influence on the rating
+reliab.glmm <- glmer(rating ~ rater + (1 | dog_name), data = long.reliab.data,
+               family = binomial)
+
+round(summary(reliab.glmm)$coefficients,2)
+
+round(drop1(reliab.glmm, test="Chisq"),3)
+```

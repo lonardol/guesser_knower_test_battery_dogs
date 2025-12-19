@@ -1,0 +1,510 @@
+---
+title: "MD1 - Exploratory analysis"
+author: "Christoph Völter"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lme4)
+library(here)
+library(papaja)
+library(gghalves)
+library(patchwork)
+library(ggpubr)
+library(sjPlot)
+load("MD1_exploratory_analysis.RData")
+```
+
+
+
+
+```{r  include=FALSE}
+## Input and process data
+raw_data <- read_csv(here("data/md1_data.csv"), show_col_types = FALSE)
+
+# Validate the data
+prereg_data <- raw_data |> 
+  filter(included == "Yes" & !grepl("cup", phase) & valid_trial <= 8) |> 
+  mutate(condition = ifelse(is.na(condition), phase, condition))
+
+```
+
+## _Reliability analysis_
+
+
+```{r  include=FALSE}
+split.half.data.agg <- prereg_data %>%
+  mutate(test_half = ifelse(valid_trial %%2 , "odd_trials", "even_trials"))%>%
+  group_by(lab, subjectID, test_half) %>%
+  summarise(mean_correct = mean(correct)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = test_half, values_from = mean_correct)
+```
+
+```{r include=FALSE}
+#Pearson correlation of odd vs even trial performance
+sh_cor <- cor.test(split.half.data.agg$odd_trials, split.half.data.agg$even_trials)
+```
+
+
+
+
+```{r include=FALSE, warning=FALSE, message=FALSE, split-odd-even, fig.cap = "The dogs' mean performance in odd and even test trials in the Non-ostensive and Ostensive conditions. The bubbles represent the number of individuals at that performance level. The red dashed line shows the linear regression line. The black dashed line shows the identity line.", fig.align = "center", out.width = "80%"}
+#### Visualisation of odd and even trial performance
+split_odd_even_plot<-ggplot(split.half.data.agg, aes(x = even_trials, y = odd_trials))+ #col = lab
+  geom_abline(intercept = 0, slope = 1, lty = 2, alpha = 0.7, size = 0.5)+
+  stat_cor(method = "pearson", aes(x = even_trials, y = odd_trials, label = paste(..r.label..)),cor.coef.name = "r", inherit.aes = F, size = 3)+
+  geom_count(alpha = .5)+
+  geom_smooth(method=lm, color="firebrick", alpha=0.5, lty=2,se=FALSE )+
+  labs (x = "Test-half 1 (even trials)", y = "Test-half 2 (odd trials)")+
+ # scale_color_colorblind(name = "Lab")+
+  theme_bw()+
+  xlim(0,1)+ ylim(0,1)
+split_odd_even_plot
+```
+
+
+
+
+
+```{r include=FALSE}
+### Individual reliability across conditions  
+#Aggregate the data by condition
+con.half.data.agg <- prereg_data %>%
+  group_by(lab, subjectID, condition) %>%
+  summarise(mean_correct = mean(correct)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = condition, values_from = mean_correct)
+```
+
+```{r include=FALSE, warning=FALSE, message=FALSE, split-conditions, fig.cap = "The dogs' mean performance in the Non-ostensive and Ostensive conditions. The bubbles represent the number of individuals at that performance levels. The red dashed line shows the linear regression line. The black dashed line shows the identity line.", fig.align = "center", out.width = "80%"}
+#### Visualisation of correlation between conditions
+split_conditions_plot<-ggplot(con.half.data.agg, aes(x = nonostensive, y = ostensive))+ #col = lab
+  geom_abline(intercept = 0, slope = 1, lty = 2, alpha = 0.7, size = 0.5)+
+  stat_cor(method = "pearson", aes(x = nonostensive, y = ostensive, label = paste(..r.label..)),cor.coef.name = "r", inherit.aes = F, size = 3)+
+  geom_count(alpha = .5)+
+  geom_smooth(method=lm, color="firebrick", alpha=0.5, lty=2,se=FALSE )+
+  labs (x = "Non-ostensive trials", y = "Ostensive trials")+
+ # scale_color_colorblind(name = "Lab")+
+  theme_bw()+
+  xlim(0,1)+ ylim(0,1)
+split_conditions_plot
+```
+```{r include=FALSE}
+#Correlate individual performance across conditions.
+con_cor<-cor.test(con.half.data.agg$nonostensive, con.half.data.agg$ostensive)
+```
+
+To examine the extent to which individual performance was stable across trials and conditions, we performed a split-half reliability analysis. We first split the data into odd and even trials (irrespective of condition) and aggregated the odd and even trial performance (mean individual performance). However, we found no evidence for a significant correlation between their performance in odd and even trials (Pearson correlation: r(`r printnum(sh_cor$parameter)`) = `r printnum(sh_cor$estimate)`, p = `r printp(sh_cor$p.value)`; Figure  \ref{fig:reli_plot}A).
+Additionally, we aggregated the Ostensive and Non-ostensive condition performance of each subject. While the correlation between the two conditions was small in magnitude, it was statistically significant, indicating a positive relationship between individuals' performance in the two conditions (r(`r printnum(con_cor$parameter)`) = `r printnum(con_cor$estimate)`, p `r printp(con_cor$p.value)`; Figure \ref{fig:reli_plot}B).
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, reli_plot, fig.cap = "Split-half reliability analysis: (A) The dogs' mean performance in odd and even test trials and (B) in the Non-ostensive and Ostensive conditions. The bubbles represent the number of individuals at that performance levels; the red dashed line shows the linear regression line. The black dashed line shows the identity line.", fig.align = "center", out.width = "90%", fig.width = 12, fig.height=5}
+library(cowplot)
+plot_grid(split_odd_even_plot, split_conditions_plot, labels=c("A", "B"))
+```
+
+
+## _Response strategies_
+```{r include=FALSE}
+strategy_data <- prereg_data %>%
+  filter(condition != "odor") %>%
+  mutate(
+    previous_trial_correct = as.numeric(ifelse(
+      subjectID == lag(subjectID), lag(correct), ""
+    )),
+    previous_trial_side = (ifelse(
+      subjectID == lag(subjectID), lag(choice), ""
+    )),
+    win_stay_lose_shift = as.numeric(
+      ifelse(
+        previous_trial_correct == 1 & previous_trial_side == choice,
+        1,
+        ifelse(
+          previous_trial_correct == 0 & previous_trial_side != choice,
+          1,
+          ifelse(
+            previous_trial_correct == 1 &
+              previous_trial_side != choice,
+            0,
+            ifelse(previous_trial_correct == 0 &
+                     previous_trial_side == choice, 0, "")
+          )
+        )
+      )
+    ),
+    win_shift_lose_stay = as.numeric(
+      ifelse(
+        previous_trial_correct == 1 & previous_trial_side != choice,
+        1,
+        ifelse(
+          previous_trial_correct == 0 & previous_trial_side == choice,
+          1,
+          ifelse(
+            previous_trial_correct == 1 &
+              previous_trial_side == choice,
+            0,
+            ifelse(previous_trial_correct == 0 &
+                     previous_trial_side != choice, 0, "")
+          )
+        )
+      )
+    )
+  ) %>%
+  filter(valid_trial != 1)
+  
+  
+
+```
+
+
+```{r  include=FALSE}
+strategy.data.agg <- strategy_data %>%
+  group_by(lab, subjectID) %>%
+  summarise(
+    mean_correct = mean(correct),
+    mean_win_stay_lose_shift = mean(win_stay_lose_shift),
+    mean_win_shift_lose_stay = mean(win_shift_lose_stay)
+  ) %>%
+  ungroup()
+```
+
+
+```{r include=FALSE}
+#Pearson correlation of correct performance and win stay lose shift strategy
+win_stay_cor <- cor.test(strategy.data.agg$mean_correct, strategy.data.agg$mean_win_stay_lose_shift)
+win_shift_cor <- cor.test(strategy.data.agg$mean_correct, strategy.data.agg$mean_win_shift_lose_stay)
+```
+
+```{r  include=FALSE}
+tt_win_stay <-t.test(strategy.data.agg$mean_win_stay_lose_shift, mu=0.5)
+tt_win_shift <-t.test(strategy.data.agg$mean_win_shift_lose_stay, mu=0.5)
+
+
+```
+
+
+```{r include=FALSE, warning=FALSE, message=FALSE, win-stay-fig, fig.cap = "Plot of dogs' aggregated performance in the Non-ostensive and Ostensive conditions as a function of a win-stay, lose-shift strategy. The bubbles represent the number of individuals at that performance level. The red dashed line shows the linear regression line. The black dashed line shows the identity line.", fig.align = "center", out.width = "80%"}
+win_stay_plot<-ggplot(strategy.data.agg, aes(x = mean_win_stay_lose_shift, y = mean_correct))+ #col = lab
+  geom_abline(intercept = 0, slope = 1, lty = 2, alpha = 0.7, size = 0.5)+
+  stat_cor(method = "pearson", aes(x = mean_win_stay_lose_shift, y = mean_correct, label = paste(..r.label..)),cor.coef.name = "r", inherit.aes = F, size = 3)+
+  geom_count(alpha = .5)+
+  geom_smooth(method=lm, color="firebrick", alpha=0.5, lty=2,se=FALSE )+
+  labs (x = "mean win-stay, lose-shift", y = "mean correct")+
+ # scale_color_colorblind(name = "Lab")+
+  theme_bw()+
+  xlim(0,1)+ ylim(0,1)+
+  theme(legend.position = c(0.9, 0.15))
+win_stay_plot
+```
+
+```{r include=FALSE, warning=FALSE, message=FALSE, win-shift-fig, fig.cap = "Plot of dogs' aggregated performance in the Non-ostensive and Ostensive conditions as a function of a win-shift, lose-stay strategy. The bubbles represent the number of individuals at that performance level. The red dashed line shows the linear regression line. The black dashed line shows the identity line.", fig.align = "center", out.width = "80%"}
+win_shift_plot<-ggplot(strategy.data.agg, aes(x = mean_win_shift_lose_stay, y = mean_correct))+ #col = lab
+  geom_abline(intercept = 0, slope = 1, lty = 2, alpha = 0.7, size = 0.5)+
+  stat_cor(method = "pearson", aes(x = mean_win_shift_lose_stay, y = mean_correct, label = paste(..r.label..)),cor.coef.name = "r", inherit.aes = F, size = 3)+
+  geom_count(alpha = .5)+
+  geom_smooth(method=lm, color="firebrick", alpha=0.5, lty=2,se=FALSE )+
+  labs (x = "mean win-shift, lose-stay", y = "mean correct")+
+ # scale_color_colorblind(name = "Lab")+
+  theme_bw()+
+  xlim(0,1)+ ylim(0,1)+
+  theme(legend.position = c(0.9, 0.15))
+win_shift_plot
+```
+
+```{r include=FALSE}
+#win stay lose shift over trials
+strategy.data.agg2 <- strategy_data %>%
+  group_by(valid_trial, condition) %>%
+  summarise(
+    mean_correct = mean(correct, na.rm=TRUE),
+    mean_win_stay_lose_shift = mean(win_stay_lose_shift, na.rm=TRUE),
+    mean_win_shift_lose_stay = mean(win_shift_lose_stay, na.rm=TRUE)
+  ) %>%
+  ungroup()
+
+ggplot(strategy.data.agg2, aes(x = valid_trial, y = mean_win_stay_lose_shift, color=condition))+ 
+  geom_point(size=2)+
+    labs (x = "trial number", y = "mean win-shift lose-stay")+
+  theme_bw()+
+  ylim(0,1)+
+  geom_hline(yintercept = 0.5, lty=2)
+
+```
+
+
+```{r include=FALSE, warning=FALSE, message=FALSE, win-shift-hist, fig.cap = "Histogram of dogs' (A) win-stay, lose-shift and (B) win-shift, lose-stay strategies. The vertical line shows the chance level of 0.5.", fig.align = "center", out.width = "80%"}
+winshift_hist<-ggplot(strategy.data.agg, aes(x=mean_win_stay_lose_shift)) + 
+  geom_histogram(color="black", fill="white", binwidth = 1/14)+
+  theme_bw()+
+  xlab("mean win-stay, lose-shift")+
+  geom_vline(xintercept=0.5, lty=2)
+winstay_hist<-ggplot(strategy.data.agg, aes(x=mean_win_shift_lose_stay)) + 
+  geom_histogram(color="black", fill="white", binwidth = 1/14)+
+  theme_bw()+
+  xlab("mean win-shift, lose-stay")+
+  geom_vline(xintercept=0.5, lty=2)
+library(cowplot)
+plot_grid(winshift_hist, winstay_hist, labels = c("A", "B"))
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, strategy_plot, fig.cap = "The dogs' choice strategies in the Non-ostensive and Ostensive conditions as a function of (A) a win-stay, lose-shift strategy or (B) a win-shift, lose-stay strategy. The bubbles represent the number of individuals at that mean performance level. The red dashed line shows the linear regression line; the black dashed line shows the identity line. (C) and (D): Histogram of dogs' distribution according to the extent to which they performed in line with the (C) win-stay, lose-shift or (D) win-shift, lose-stay strategies. The vertical line shows the chance level of 0.5.", fig.align = "center", out.width = "80%", fig.width = 12, fig.height=10}
+library(cowplot)
+plot_grid(win_stay_plot, win_shift_plot, winshift_hist, winstay_hist, labels=c("A", "B", "C", "D"))
+```
+
+For each test trial (excluding the first trial in each condition block), we calculated whether the dogs' performance followed a win-stay, lose-shift or a win-shift, lose-stay strategy based on their performance in the previous trial. The win-stay, lose-shift strategy was negatively correlated with success (Pearson correlation: r(`r printnum(win_stay_cor$parameter)`) = `r printnum(win_stay_cor$estimate)`, p `r printp(win_stay_cor$p.value)`, Figure \ref{fig:strategy_plot}A) and conversely a win-shift, lose-stay strategy was positively correlated with success (r(`r printnum(win_shift_cor$parameter)`) = `r printnum(win_shift_cor$estimate)`, p `r printp(win_shift_cor$p.value)`, Figure \ref{fig:strategy_plot}B). These correlations are likely caused by the pseudo-randomization of the baited side (the food was presented no more than two trials in a row on the same side). At a group level, the dogs did not seem to engage in the win-stay, lose-shift (Mean = `r round(tt_win_stay$estimate, 2)`, 95% CI [`r round(tt_win_stay$conf.int[1],2)`, `r round(tt_win_stay$conf.int[2],2)`], *t*(`r tt_win_stay$parameter`)=`r round(tt_win_stay$statistic,2)`, *p*=`r printp(tt_win_stay$p.value)`; Figure \ref{fig:strategy_plot}C) or the win-shift, lose-stay strategy (Mean = `r round(tt_win_shift$estimate, 2)`, 95% CI [`r round(tt_win_shift$conf.int[1],2)`, `r round(tt_win_shift$conf.int[2],2)`], *t*(`r tt_win_shift$parameter`)=`r round(tt_win_shift$statistic,2)`, *p*=`r printp(tt_win_shift$p.value)`; Figure \ref{fig:strategy_plot}D) above chance levels (0.5).  
+ 
+
+## _Breed group analysis_
+
+```{r include=FALSE}
+### Centering variables for modeling
+model_data_md1_purebred <- prereg_data %>%
+  filter(condition == "ostensive" | condition == "nonostensive", !is.na(breed_group), #filter out mixed breeds
+         !breed_group %in% c("Scent hounds", "Dachshunds", "Sighthounds")) %>% #filter out breed groups with less than 8 individuals
+  mutate(
+    z_age = as.numeric(scale(age, scale = TRUE, center = TRUE)),
+    sex.c = as.numeric(scale(
+      as.numeric(as.factor(sex)), scale = FALSE, center = TRUE
+    )),
+    condition.c = as.numeric(scale(
+      as.numeric(as.factor(condition)), scale = FALSE, center = TRUE
+    )),
+    condition_order.c = as.numeric(scale(
+      as.numeric(as.factor(condition_order)), scale = FALSE, center = TRUE
+    )),
+    z.trial_num = as.numeric(scale(
+      valid_trial, scale = TRUE, center = TRUE
+    )),
+    z.training_experience = as.numeric(scale(
+      cbarq_training, scale = TRUE, center = TRUE
+    ))
+  )
+
+breed_groups_included<-as.vector(levels(as.factor(model_data_md1_purebred$breed_group)))
+pure_bred_n_breedgroup <- length(levels(as.factor(model_data_md1_purebred$breed_group)))
+pure_bred_n_subject <- length(levels(as.factor(model_data_md1_purebred$subjectID)))
+table(model_data_md1_purebred$subjectID, model_data_md1_purebred$valid_trial)
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+
+### Define full model
+
+# #### check which random sloped to include. 
+# From the registered report stage 1 ms:
+# We will only include random slopes if the corresponding predictor variable varies in at least 50% of the levels of the random intercept. We will only include the random slope of the interaction if there is sufficient variation in both of its terms in at least 50% of the levels of the random intercept. We will only include the correlations between randomintercepts and random slopes if including them results in a model with better fit (i.e., smaller log-likelihood).
+source("./functions/diagnostic_fcns.r")
+xx.fe.re=fe.re.tab(fe.model="correct ~ condition + condition_order + z.trial_num + sex*desexed + z_age + z.training_experience",
+re="(1|subjectID)+(1|lab)+(1|breed_group)", data=model_data_md1_purebred)
+xx.fe.re$summary
+```
+
+
+```{r include=FALSE}
+#### Set model control parameters and run glmer
+contr <- glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 10000000), calc.derivs = FALSE)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+fixed_effects_md1 <-
+  "correct ~ condition + condition_order + z.trial_num + sex*desexed + z_age + z.training_experience +"
+random_effects_md1 <-
+  "(1 + condition.c + z.trial_num | subjectID) + (1 + condition.c + condition_order + z.trial_num + sex*desexed + z_age + z.training_experience | lab) + (1 + condition.c + condition_order + z.trial_num + sex*desexed + z_age + z.training_experience | breed_group)"
+full_model_formula_md1 <-
+  paste0(fixed_effects_md1, random_effects_md1)
+```
+
+```{r eval=FALSE, include=FALSE} 
+fixed_effects_md1_red0 <- "correct ~ condition + condition_order + z.trial_num + sex*desexed + z_age + z.training_experience + " 
+random_effects_md1_red0 <- "(1+condition |subjectID) + (1+condition + condition_order |lab) + (1+condition + condition_order | breed_group) "
+full_model_formula_md1_red0 <- paste0(fixed_effects_md1_red0, random_effects_md1_red0)
+
+full_model_md1_purebred_red0 <-
+  glmer(
+    full_model_formula_md1_red0,
+    family = binomial,
+    data = model_data_md1_purebred,
+    control = contr#,
+   # nAGQ = 0
+  )
+```
+
+
+```{r eval=FALSE, include=FALSE} 
+random_effects_md1_red <- "(1 + condition.c + z.trial_num | subjectID) + (1 + condition.c + condition_order + z.trial_num + sex * desexed + z_age + z.training_experience | breed_group)"
+full_model_formula_md1_red <- paste0(fixed_effects_md1, random_effects_md1_red)
+
+full_model_md1_purebred_red <-
+  glmer(
+    full_model_formula_md1_red,
+    family = binomial,
+    data = model_data_md1_purebred,
+    control = contr#,
+   # nAGQ = 0
+  )
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+full_model_md1_purebred <-
+  glmer(
+    full_model_formula_md1,
+    family = binomial,
+    data = model_data_md1_purebred,
+    control = contr#,
+   # nAGQ = 0
+  )
+full_model_table_purebred <-
+  as.data.frame(summary(full_model_md1_purebred)$coefficients) |>
+  rownames_to_column(var = "effect_full")
+write_csv(full_model_table_purebred, here("results/md1_full_model_breed_group.csv"))
+
+full_model_table_md1 <-
+  read_csv(here("results/md1_full_model_breed_group.csv"")) |>
+  rename(effect_full = effect)
+```
+
+```{r include=FALSE}
+summary(full_model_md1_purebred)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#### Likelihood ratio test
+drop1_full_model_md1_purebred_red <- drop1(full_model_md1_purebred_red, test = "Chisq", control = contr)
+drop1_full_model_md1_purebred_red
+
+drop1_full_model_md1_purebred <- drop1(full_model_md1_purebred, test = "Chisq", control = contr)
+drop1_full_model_md1_purebred
+```
+
+```{r eval=FALSE, include=FALSE}
+save.image("MD1_exploratory_analysis.RData")
+```
+
+```{r eval=FALSE, include=FALSE}
+drop1_full_model_rownames_md1_purebred <- rownames(drop1_full_model_md1_purebred)
+drop1_full_model_table_md1_purebred <- tibble(effect_drop = drop1_full_model_rownames_md1_purebred, drop1_full_model_md1_purebred)
+write_csv(drop1_full_model_table_md1_purebred, here("results/md1_breedgroup_drop_model.csv"))
+drop1_full_model_table_md1_purebred <- read_csv(here("results/md1_breedgroup_model.csv")) |> 
+  rename(effect_drop = effect)
+```
+
+
+
+```{r include=FALSE}
+#### Estimates of the fixed effects
+full_model_md1_purebred
+```
+
+
+
+```{r include=FALSE}
+#### Random effects
+summary(full_model_md1_purebred)$varcor
+
+```
+
+
+ 
+```{r eval=FALSE, echo=FALSE}
+### Build table
+full_model_table_purebred_trimmed <- full_model_table_purebred |> 
+  filter(!effect_full %in% c("sexMale", "desexedYes"))
+
+model_table_md1_breed_groups <- bind_cols(full_model_table_purebred_trimmed,
+                             drop1_full_model_md1_purebred#,
+                             #full_model_boot_ci,
+                            # model_bfs_md1
+) %>%
+  select(effect_full, Estimate, SE = `Std. Error`, #LowerCI = X2.5., UpperCI = X97.5., 
+         Chi2 = LRT, df = npar, p = `Pr(Chi)`) %>%#, bf
+  mutate(across(where(is.numeric), ~ round(.x, 2))) %>% 
+  # mutate(across(Chi2:bf, ~replace_na(.x, ""))) %>% 
+  remove_rownames()
+#The random effect of breed group did not explain much of the variance in the response (Figure \ref{fig:glmm_re}).
+```
+We fitted an additional binomial GLMM just including purebred dogs of the FCI groups with at least 8 individuals in the sample (N = `r pure_bred_n_subject` of `r pure_bred_n_breedgroup` FCI groups: `r breed_groups_included`). We included breed group as a random intercept (along with with subject and lab ID) and we included all possible random slope components. Condition had no significant effect on the dogs' choice performance ($\chi$^2^(`r model_table_md1_breed_groups[model_table_md1_breed_groups$effect == "conditionostensive", "df"]`) = `r printnum(model_table_md1_breed_groups[model_table_md1_breed_groups$effect == "conditionostensive", "Chi2"])`, p = `r printnum(model_table_md1_breed_groups[model_table_md1_breed_groups$effect == "conditionostensive", "p"])`). None of the control predictor variables (order of condition, trial number within condition, sex, neuter status, age, C-BARQ trainability score) had a significant effect on the dogs' choice performance (Table \ref{tab:glmm-table_expl}). The only trend was that dogs that started with the Ostensive condition tended to choose the baited cup less often than dogs that started with the Non-ostensive condition.   
+
+```{r glmm-table_expl, echo=FALSE}
+knitr::kable(model_table_md1_breed_groups, caption = "Results of GLMM of the dogs' choice performance (with breed group as random effect)", col.names = c("", "Estimate", "SE", "$\\chi^{2}$", "df", "\\textit{p}"), align = c("l", rep("r", 8)), booktab = TRUE)#"$BF_{10}$"
+```
+
+```{r include=FALSE, warning=FALSE, message=FALSE, glmm_est, fig.cap = "Forest plot of odds ratios for fixed effects. Odds ratios are plotted on a log scale.", fig.align = "center", out.width = "80%"}
+plot_model(full_model_md1_purebred, type='est', show.values = TRUE, colors = "Accent") +
+  ylim(0.5, 1.5)+
+  geom_hline(yintercept=1)+
+  theme_bw()
+```
+
+
+```{r include=FALSE, warning=FALSE, message=FALSE, glmm_re, fig.cap = "Forest plot of odds ratios for FCI breed group random effects. Odds ratios are plotted on a log scale.", fig.align = "center", out.width = "100%"}
+plot_model(
+  full_model_md1_purebred,
+  type = 're',
+  show.values = TRUE,
+  value.offset = .4,
+  value.size = 2,
+  dot.size = 1.5,
+  line.size = 0.5,
+)[[3]] +
+  ylim(0.2, 3) +
+  geom_hline(yintercept = 1) +
+  theme_bw()
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#### Check assumptions -------------------------------------------------------
+# Plot visualizations of model checks
+check_model(full_model_md1)
+
+# check for collinearity
+check_collinear <- lm(response ~ condition + condition_order + z.trial_num + sex + z_age,
+                      data = model_data_md1_purebred_purebred
+)
+predictor_vifs <- vif(check_collinear_md1)
+# Collinearity was no issue (maximum variance inflation factor: 1.02)
+
+
+# Model stability
+# One subject at a time excluded to assess the impact of outliers.
+
+m.stab.b_md1 <- glmm.model.stab(model.res = full_model_md1, use = c("subjectID"))
+m.stab.b_md1$detailed$warnings
+xx <- as.data.frame(round(m.stab.b_md1$summary[, -1], 3))
+
+png("figures/md1_full_model_stability_plot.png")
+m.stab.plot(round(m.stab.b_md1$summary[, -1], 3))
+dev.off()
+# m.stab.plot(round(m.stab.b_md1$summary[, -1], 3))
+# The model appeared to be stable with respect to the fixed effects (see full_model_stability_plot).
+
+
+# Calculate CIs for plot
+# Model with all predictor variables centered except for condition:
+full_model.CI.con_md1 <- glmer(response ~ condition + condition_order.c + z.trial_num + sex.c + z_age + z.training_experience + (condition.c + z.trial_num | subjectID),
+  family = binomial, data = model_data_md1_purebred_purebred, control = contr
+)
+
+pred.con.ci_md1 <- boot.glmm.pred(model.res=full_model.CI.con_md1, level=0.95, use="condition", n.cores="all-1", para=TRUE)
+
+pred.con.ci_md1$ci.predicted
+
+write.csv(pred.con.ci_md1$ci.predicted, file = "data/full_model_predicted_ci_for_conditionMD1_Vienna.csv")
+
+```
+ 
+
+
