@@ -987,7 +987,7 @@ test_retest_p
 ggsave(test_retest_p, filename = "plots/density_plot_test_re-test_rel.png", width = 12, height = 15, scale = 0.6, bg = "white", dpi=1200) 
 ```
 
-#Across conditions 
+#Between conditions 
 ```{r}
 #pool sessions together
 conditions_data <- xdata %>%
@@ -1088,7 +1088,8 @@ corrplot(corr_matrix, method = "color",
   tl.srt = 25)
 
 ```{r}
-#LL:ignore from here
+#LL: add these to manuscript (SM), but first adapt to be consistent with above - data of all sessions pooled together
+
 #First session
 cor_across_condition_tot <- xdata %>%
    filter (session == 1)  %>%
@@ -1581,7 +1582,7 @@ for(i in seq_along(dog_groups)){
 pref_LR <- table (xdata$choice_LR)
 number_of_choice = sum (pref_LR)
 
-#at the individual level (binomial tests, BH choice_binaryed p-values) - (could also be a bias for the experimenter)
+#at the individual level (binomial tests, BH choice_binary p-values) - (could also be a bias for the experimenter)
 side.bias.data<-xdata %>%
   mutate(choice_LR_binary=ifelse(choice_LR=="L",1,0)) %>% 
   group_by(dog_name) %>% 
@@ -1619,7 +1620,7 @@ confint_prob.sbm <- logit_to_prob(confint_icpt.sbm["(Intercept)", ])
 
 print(paste("Estimated probability:", round(prob_intercept.sbm, 3)))
 print(paste("95% CI for probability:", round(confint_prob.sbm, 3)))
-###dogs chose significantly more the L than the R pointing (might be because we start by baiting the left side in the pre-training?)
+###dogs chose significantly more the L than the R pointing (might be because we start by baiting the left side in the pre-training)
 ```
 
 ####Does this influence our results ?
