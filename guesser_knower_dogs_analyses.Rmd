@@ -1866,22 +1866,34 @@ For each test trial (excluding the first trial in each condition block), we calc
 ggsave(strategies.p, filename = "plots/win_stay_lose_shift_strategies.png", width = 10, height = 10, scale=0.8, bg = "white", dpi=1200) 
 ```
 
-# Inter-observer reliability (choice - binary variable, repeated obs. per subj)
+# Inter-observer reliability (choice - binary variable)
 ```{r}
+library(forcats)
 #read in reliability scorings
-reliab.data<- read.csv("data/gk_reliability_session1.csv", header=T) %>% 
-  mutate(original_code_fct=as.factor(original_code),
-         recoding_FL_fct=as.factor(recoding_FL))
+reliab.data <- read.csv("data/gk_inter_observer_reliability_sessions1_2_3.csv", header = TRUE) %>% 
+  mutate(
+    original_code_fct = as.factor(original_code),  # contains 2 NAs
+    recoding_fct      = as.factor(recoding)
+  ) %>%
+  filter(!is.na(original_code_fct))  # remove those rows from entire dataset
 
 str(reliab.data)
-unique(levels(as.factor(reliab.data$dog_name))) #31 dogs coded, 744 trials in total
-which(is.na(reliab.data$original_code)) #contains one NA, recoded as missing to calculate % agreement
+unique(levels(as.factor(reliab.data$dog_name))) #85 dogs coded
+length(reliab.data$same) #2278 trials in total
 
-reliab.data$original_code[is.na(reliab.data$original_code)] <- "missing"
+which(is.na(reliab.data$original_code)) #2 of these trials were coded as NAs and removed from  analysis
 
 #Calculate Percentage Agreement
-percentage_agreement <- sum(reliab.data$recoding_FL == reliab.data$original_code) / nrow(reliab.data) * 100
-percentage_agreement #99.46%
+percentage_agreement <- sum(reliab.data$recoding_fct == reliab.data$original_code_fct) / nrow(reliab.data) * 100
+cat("Percentage Agreement:", round(percentage_agreement, 2), "%\n") #99.56%
+
+#calculate Cohen's kappa
+library(irr)
+kappa_result <- kappa2(reliab.data[, c("original_code_fct", "recoding_fct")], "unweighted")
+kappa_result
+#Trials = 2278; Scorings = 2 Kappa = 0.991 z = 7.25 p-value = 4.3e-13 
+
+
 
 library(tidyr)
 long.reliab.data <- pivot_longer(reliab.data, cols = c(recoding_FL, original_code),
