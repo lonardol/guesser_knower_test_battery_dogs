@@ -1,0 +1,10 @@
+dog_id,nr_trials_chose_knower,nr_trials,prop_knower_pref,sex,breed,age,p-value_binomial_test_knower_pref,p-value_corrected
+Chilli5,35,52,0.673,m,mix,133,0.018,0.264
+Chilli7,36,54,0.667,f,flat_coated_retriever,82,0.02,0.264
+Akira8,35,54,0.648,f,old_german_shepherd_dog,97,0.04,0.416
+Nero3,35,54,0.648,m,belgian_shepherd_dog_malinois,18,0.04,0.416
+Bookie,38,54,0.704,m,maltese,50,0.004,0.178
+Finley,39,54,0.722,m,shetland_sheepdog_sheltie,91,0.001,0.139
+Jabby,37,54,0.685,f,romagna_waterdog,67,0.009,0.211
+Ragnar,9,35,0.257,m,bedlington_terrier,85,0.006,0.186
+Holly9,36,54,0.667,f,beagle,95,0.02,0.264

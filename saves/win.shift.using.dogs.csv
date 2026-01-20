@@ -1,0 +1,5 @@
+dog_name,mean_knower_pref,mean_win_stay_lose_shift,mean_win_shift_lose_stay,n_trials,n_trials_knower_pref,n_trials_win_shift_pref,p-value_binomial_test_win_shift_strategy,p-value_corrected
+Akira8,0.65,0.27,0.73,54,35,37,0.01,0.46
+Aramis8,0.51,0.66,0.34,53,27,17,0.01,0.46
+Jabby,0.69,0.29,0.71,54,37,36,0.02,0.46
+Ragnar,0.26,0.7,0.3,35,9,10,0.02,0.46

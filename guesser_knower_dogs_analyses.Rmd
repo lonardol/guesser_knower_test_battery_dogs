@@ -7,7 +7,7 @@ output: html_document
 
 ### Load libraries and custom functions
 ```{r}
-#rm(list=c("mu"))
+#rm(list=c("model"))
 library(tidyverse)
 library(ggplot2)
 library(lme4)
@@ -83,10 +83,157 @@ table(xdata$dog_id, xdata$session)
 sum(!is.na(session1$choice_binary)) #2224
 sum(!is.na(session2$choice_binary)) #2087
 sum(!is.na(session3$choice_binary)) #2015
+
+#turn into factors
+xdata<-xdata %>% 
+  mutate(experimenter_right_role=as.factor(experimenter_right_role),
+         experimenter_left_role=as.factor(experimenter_left_role))
+```
+
+
+```{r}
+#check counterbalancing
+length(xdata$experimenter_left_role[xdata$experimenter_left_role=="G"]) #3163 trials in which guesser on the left
+length(xdata$experimenter_right_role[xdata$experimenter_right_role=="G"]) #3163 trials in which G on the right
+#perfectly balanced
+
+#were the pointing gestures of all experimenters approximately equally likely to be followed? 
+xdata<-xdata %>% 
+  mutate(experimenter_followed=as.factor(ifelse(choice_LR=="L", experimenter_left_id, 
+                ifelse(choice_LR=="R", experimenter_right_id, NA))))
+
+count_exp_id_followed<-table(xdata$experimenter_followed)
+
+#FL: 59%
+count_exp_id_followed["FL"]/(sum(xdata$experimenter_right_id=="FL") + sum(xdata$experimenter_left_id=="FL"))
+#SV: 49%
+count_exp_id_followed["SV"]/(sum(xdata$experimenter_right_id=="SV") + sum(xdata$experimenter_left_id=="SV"))
+#HV: 50%
+count_exp_id_followed["HV"]/(sum(xdata$experimenter_right_id=="HV") + sum(xdata$experimenter_left_id=="HV"))
+#JAS: 41%
+count_exp_id_followed["JAS"]/(sum(xdata$experimenter_right_id=="JAS") + sum(xdata$experimenter_left_id=="JAS"))
+#JD: 43%
+count_exp_id_followed["JD"]/(sum(xdata$experimenter_right_id=="JD") + sum(xdata$experimenter_left_id=="JD"))
+#ND: 46%
+count_exp_id_followed["ND"]/(sum(xdata$experimenter_right_id=="ND") + sum(xdata$experimenter_left_id=="ND"))
+#PTN: 44%
+count_exp_id_followed["PTN"]/(sum(xdata$experimenter_right_id=="PTN") + sum(xdata$experimenter_left_id=="PTN"))
+#SAD: 57%
+count_exp_id_followed["SAD"]/(sum(xdata$experimenter_right_id=="SAD") + sum(xdata$experimenter_left_id=="SAD"))
+
+#did the experimenters have roughly equal probability of playing the 3 roles?
+xdata <-xdata %>% 
+  mutate(
+  guesser_id = ifelse(
+    experimenter_left_role == "G",  experimenter_left_id,
+    ifelse(experimenter_right_role == "G", experimenter_right_id,
+      NA
+    )
+  ),
+knower_id = ifelse(
+    experimenter_left_role == "K",  experimenter_left_id,
+    ifelse(experimenter_right_role == "K", experimenter_right_id,
+      NA
+    )
+  ))
+
+count_guesser_id<-table(xdata$guesser_id)
+count_knower_id<-table(xdata$knower_id)
+count_hider_id<-table(xdata$hider_id)
+
+#FL: K=34%; G=34%; H=32%
+count_knower_id["FL"]/(sum(xdata$knower_id=="FL") + sum(xdata$guesser_id=="FL") + sum(xdata$hider_id=="FL"))
+count_guesser_id["FL"]/(sum(xdata$knower_id=="FL") + sum(xdata$guesser_id=="FL") + sum(xdata$hider_id=="FL"))
+count_hider_id["FL"]/(sum(xdata$knower_id=="FL") + sum(xdata$guesser_id=="FL") + sum(xdata$hider_id=="FL"))
+#SV: K=34%; G=34%; H=32%
+count_knower_id["SV"]/(sum(xdata$knower_id=="SV") + sum(xdata$guesser_id=="SV") + sum(xdata$hider_id=="SV"))
+count_guesser_id["SV"]/(sum(xdata$knower_id=="SV") + sum(xdata$guesser_id=="SV") + sum(xdata$hider_id=="SV"))
+count_hider_id["SV"]/(sum(xdata$knower_id=="SV") + sum(xdata$guesser_id=="SV") + sum(xdata$hider_id=="SV"))
+#HV: K=33%; G=33%; H=34%
+count_knower_id["HV"]/(sum(xdata$knower_id=="HV") + sum(xdata$guesser_id=="HV") + sum(xdata$hider_id=="HV"))
+count_guesser_id["HV"]/(sum(xdata$knower_id=="HV") + sum(xdata$guesser_id=="HV") + sum(xdata$hider_id=="HV"))
+count_hider_id["HV"]/(sum(xdata$knower_id=="HV") + sum(xdata$guesser_id=="HV") + sum(xdata$hider_id=="HV"))
+#JAS: K=35%; G=35%; H=30%
+count_knower_id["JAS"]/(sum(xdata$knower_id=="JAS") + sum(xdata$guesser_id=="JAS") + sum(xdata$hider_id=="JAS"))
+count_guesser_id["JAS"]/(sum(xdata$knower_id=="JAS") + sum(xdata$guesser_id=="JAS") + sum(xdata$hider_id=="JAS"))
+count_hider_id["JAS"]/(sum(xdata$knower_id=="JAS") + sum(xdata$guesser_id=="JAS") + sum(xdata$hider_id=="JAS"))
+#HT: K=0%; G=0%; H=100%; only tested 5 dogs before having to leave the experiment for personal reasons
+count_knower_id["HT"]/(sum(xdata$knower_id=="HT") + sum(xdata$guesser_id=="HT") + sum(xdata$hider_id=="HT"))
+count_guesser_id["HT"]/(sum(xdata$knower_id=="HT") + sum(xdata$guesser_id=="HT") + sum(xdata$hider_id=="HT"))
+count_hider_id["HT"]/(sum(xdata$knower_id=="HT") + sum(xdata$guesser_id=="HT") + sum(xdata$hider_id=="HT"))
+#JD: K=36%; G=36%; H=28%
+count_knower_id["JD"]/(sum(xdata$knower_id=="JD") + sum(xdata$guesser_id=="JD") + sum(xdata$hider_id=="JD"))
+count_guesser_id["JD"]/(sum(xdata$knower_id=="JD") + sum(xdata$guesser_id=="JD") + sum(xdata$hider_id=="JD"))
+count_hider_id["JD"]/(sum(xdata$knower_id=="JD") + sum(xdata$guesser_id=="JD") + sum(xdata$hider_id=="JD"))
+#ND: K=34%; G=34%; H=32%
+count_knower_id["ND"]/(sum(xdata$knower_id=="ND") + sum(xdata$guesser_id=="ND") + sum(xdata$hider_id=="ND"))
+count_guesser_id["ND"]/(sum(xdata$knower_id=="ND") + sum(xdata$guesser_id=="ND") + sum(xdata$hider_id=="ND"))
+count_hider_id["ND"]/(sum(xdata$knower_id=="ND") + sum(xdata$guesser_id=="ND") + sum(xdata$hider_id=="ND"))
+#PTN: K=31%; G=31%; H=39%
+count_knower_id["PTN"]/(sum(xdata$knower_id=="PTN") + sum(xdata$guesser_id=="PTN") + sum(xdata$hider_id=="PTN"))
+count_guesser_id["PTN"]/(sum(xdata$knower_id=="PTN") + sum(xdata$guesser_id=="PTN") + sum(xdata$hider_id=="PTN"))
+count_hider_id["PTN"]/(sum(xdata$knower_id=="PTN") + sum(xdata$guesser_id=="PTN") + sum(xdata$hider_id=="PTN"))
+#SAD: K=33%; G=33%; H=33%
+count_knower_id["SAD"]/(sum(xdata$knower_id=="SAD") + sum(xdata$guesser_id=="SAD") + sum(xdata$hider_id=="SAD"))
+count_guesser_id["SAD"]/(sum(xdata$knower_id=="SAD") + sum(xdata$guesser_id=="SAD") + sum(xdata$hider_id=="SAD"))
+count_hider_id["SAD"]/(sum(xdata$knower_id=="SAD") + sum(xdata$guesser_id=="SAD") + sum(xdata$hider_id=="SAD"))
+
+```
+###Time between sessions #LL: remove and remove column test date from data file
+```{r}
+date_data <- xdata %>%
+  mutate(test_date = as.Date(test_date, format = "%d/%m/%Y")) %>%
+  group_by(dog_name, session) %>%
+  summarise(date_session = min(test_date), .groups = "drop") %>% #we keep only one line per session and per dog
+  pivot_wider(names_from = session, values_from = date_session, names_prefix = "session_")  %>% #for each dog we put the date of the sessions in different columns
+  mutate(delay_1_2 = as.numeric(session_2 - session_1),
+         delay_2_3 = as.numeric(session_3 - session_2),
+         delay_1_3 = as.numeric(session_3 - session_1))
+print(date_data)
+
+mean_delay_1_2 <- mean(date_data$delay_1_2, na.rm = TRUE)
+mean_delay_2_3 <- mean(date_data$delay_2_3, na.rm = TRUE)
+mean_delay_1_3 <- mean(date_data$delay_1_3, na.rm = TRUE)
+sd_delay_1_2 <- sd(date_data$delay_1_2, na.rm = TRUE)
+sd_delay_2_3 <- sd(date_data$delay_2_3, na.rm = TRUE)
+sd_delay_1_3 <- sd(date_data$delay_1_3, na.rm = TRUE)
+
+cat("Mean delay S1-S2 :", round(mean_delay_1_2, 2), "days\n")
+cat("Mean delay S2-S3:", round(mean_delay_2_3, 2), "days\n")
+cat("Mean delay S1-S3:", round(mean_delay_1_3, 2), "days\n")
+
+cat("Standard Deviation delay S1-S2:", round(sd_delay_1_2, 2), "days\n")
+cat("Standard Deviation delay S2-S3:", round(sd_delay_2_3, 2), "days\n")
+cat("Standard Deviation delay S1-S3:", round(sd_delay_1_3, 2), "days\n")
 ```
 
 ###Descriptive stats
 ```{r}
+#conditon and session
+results <- xdata %>%
+  group_by(condition, session) %>%
+  summarise(knower_pref = sum(choice_binary), 
+            trials= length(choice_binary),
+            prop_knower_pref=round(knower_pref/trials, 2), .groups = "drop")
+
+#conditions, pooled across sessions
+results_overall <- xdata %>%
+  group_by(condition) %>%
+  summarise(knower_pref = sum(choice_binary), 
+            trials= length(choice_binary),
+            prop_knower_pref=round(knower_pref/trials, 2), .groups = "drop")
+
+#first trials in each condition in each session
+results_ft <- xdata %>%
+  group_by(dog_name, session, condition) %>% 
+  mutate(trial_within_cond = rank(trial, ties.method = "first")) %>%
+  ungroup() %>% 
+  filter(trial_within_cond==1) %>% 
+  group_by(condition, session) %>%
+  summarise(knower_pref = sum(choice_binary), 
+            trials= length(choice_binary),
+            prop_knower_pref=round(knower_pref/trials, 2), .groups = "drop")
+
 subj.data<- xdata %>% 
   group_by(dog_id) %>% 
   summarise(knower_pref=sum(choice_binary),
@@ -117,7 +264,7 @@ subj.data.test<- xdata %>%
 mean(subj.data.test$prop_knower_pref) # 54%
 # 6 dogs (16, 19, 33, 37, 53, 79)  performed significantly above chance level (binomial tests) when pooling together all test conditions (excluding control) of all 3 sessions. Dog 53, a shetland sheepdog, performed best with knower pref=72%
 #Followed by dog 37, a maltese, who had knower pref=70%
-#Dog 68, a Bedlington terrier who got excluded in session 3 (pretraining I think), performed significantly below chance level: knower pref=26%
+#Dog 68, a Bedlington terrier who got excluded in session 3 (pretraining), performed significantly below chance level: knower pref=26%
 
 #knower preference across conditions (including control)
 
@@ -132,8 +279,8 @@ subj.data.cond<- xdata %>%
 
 mean(subj.data.cond$prop_knower_pref) # 55%
 
-sum(subj.data.cond$knower_pref==6) #18 combinations of dog and condition in which the dog performed above chance level (6/6 trials, binomial test)
-subj.data.cond$condition[subj.data.cond$knower_pref==6] #4 absent, 3 back turned, 5 present, 6 looking away (only in 3rd session)
+sum(subj.data.cond$knower_pref>13) #17 combinations of dog and condition in which the dog performed above chance level (more than 13/18 trials, binomial test) #there might be more when dogs have fewer than 18 trials (combined across 3 sessions)
+subj.data.cond$condition[subj.data.cond$knower_pref>13] #6 absent, 4 back turned, 6 present, 1 looking away 
 
 ```
 
@@ -155,9 +302,6 @@ plot.data<- subj.data.cond %>%
 #Error bars show 95% confidence intervals; 
 #asterisk indicates significance of the comparison with chance level (icpt only models)
 
-
-#OLD, 2 browns and 2 teals my_cols <- c("#8C510A", "#BF812D", "#80CDC1", "#01665E")
-#old2 #my_cols <- viridisLite::viridis(4)
 my_cols <- c("#A8E1D8", "#66C3B3", "#1A8F87", "#01665E")
 
 # heights where the bars should be drawn
@@ -204,29 +348,91 @@ ggsave(bar_plot , filename = "plots/barplot_all_sessions_all_dogs.png", width = 
 
 ### Boxplot 
 ```{r}
-boxplot<-ggplot(data=subj.data.cond %>% 
-        mutate(condition=fct_recode(condition, 
-                                "back turned" = "back_turned", 
-                                "looking away" = "looking_away"),
-                condition = fct_relevel(condition, "present")), 
-       aes(x = condition, y = prop_knower_pref, fill=condition)) +
-  geom_boxplot()  +
-  geom_jitter(shape=20, position=position_jitter(0.1), alpha=.3)+
-  geom_line(aes(group = dog_id), alpha=0.05, lty=1) +
-  ylim(c(0,1))+
-  ylab("Proportion knower preference")+
-  geom_hline(yintercept=0.5, lty=2, col="red")+
+emm.plot <- emmeans(
+  mm1_choice,
+  ~ condition,
+  type = "response"   
+) %>%
+  as.data.frame()
+
+
+set.seed(121)  # reproducible jitter
+
+box_plot_data <- subj.data.cond %>% 
+  mutate(
+    condition = fct_recode(
+      condition,
+      "back turned"  = "back_turned",
+      "looking away" = "looking_away"
+    ),
+    condition = fct_relevel(condition, "present"),
+    x_numeric  = as.numeric(condition),
+    x_jittered = x_numeric + runif(n(), -0.15, 0.15)
+  )
+
+boxplot <- ggplot(
+  data = box_plot_data,
+  aes(x = condition, y = prop_knower_pref, fill = condition)
+) +
+  # Boxplot (discrete x)
+  geom_boxplot() +
+
+  # Lines connecting individuals (numeric jitter)
+  geom_line(
+    aes(x = x_jittered, group = dog_id),
+    alpha = 0.3,
+    linewidth = 0.4,
+    color = "gray50"
+  ) +
+
+  # Points (same numeric jitter)
+  geom_point(
+    aes(x = x_jittered),
+    alpha = 0.3,
+    size = 2
+  ) +
+  
+  # Model confidence intervals
+  geom_errorbar(
+    data = emm.plot,
+    aes(x = condition, ymin = asymp.LCL, ymax = asymp.UCL),
+    inherit.aes = FALSE,
+    linewidth = 1.2,
+    width = 0.15,
+    col="purple"
+  ) +
+  # Model estimates
+  geom_point(
+    data = emm.plot,
+    aes(x = condition, y = prob),
+    inherit.aes = FALSE,
+    size = 4,
+    shape = 21,
+    fill = "white",
+    stroke = 1
+  ) +
+
+  ylim(0, 1) +
+  ylab("Proportion knower preference") +
+  geom_text(aes(x = 1, y = 0.95, label = "*"), col="red", size = 8) +
+  geom_text(aes(x = 2, y = 0.95, label = "*"), col="red", size = 8) +
+  geom_text(aes(x = 3, y = 0.95, label = "*"), col="red", size = 8) +
+  geom_hline(yintercept = 0.5, lty = 2, col = "red") +
   scale_fill_manual(values = my_cols) +
-  theme_classic()+
-   theme(
-    axis.text = element_text(size = 11),
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text  = element_text(size = 11),
     axis.title = element_text(size = 16)
   )
+
 boxplot
+
 ```
+
 ```{r}
 #save the boxplot
-ggsave(boxplot , filename = "plots/boxplot_all_sessions_all_dogs.png", width = 10, height = 6, scale=0.8, dpi = 1200)
+ggsave(boxplot , filename = "plots/boxplot_all_sessions_all_dogs.png", width = 10, height = 6, scale=0.7, dpi = 1200)
 ```
 # Plot barplot and boxplot together
 
@@ -242,7 +448,7 @@ barplot_boxplot_plot <- (
 barplot_boxplot_plot
 ggsave("./plots/Fig_2_knower_preference.png", barplot_boxplot_plot, width = 12, height = 5, dpi = 1200)
 ```
-### Icpt-only bin model 1) all experimental conditions (except control)
+### Icpt-only bin model all sessions 1) all experimental conditions (except control)
 ```{r}
 #Subset the data to exclude guesser present
 exp.data<-xdata %>% 
@@ -393,6 +599,167 @@ confint_prob5 <- logit_to_prob(confint_icpt.mm5["(Intercept)", ])
 
 print(paste("Estimated probability:", round(prob_intercept5, 3)))
 print(paste("95% CI for probability:", round(confint_prob5, 3)))
+```
+#Exploratory: comparing against chance performance in each session and condition separately
+```{r}
+mS1.bt <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session1 %>% filter(condition=="back_turned"),
+     family = binomial)
+
+summary(mS1.bt)
+
+mS1.pres <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session1 %>% filter(condition=="present"),
+     family = binomial)
+
+summary(mS1.pres)
+
+
+mS1.abs <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session1 %>% filter(condition=="absent"),
+     family = binomial)
+
+summary(mS1.abs)
+
+
+mS2.bt <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session2 %>% filter(condition=="back_turned"),
+     family = binomial)
+
+summary(mS2.bt)
+
+mS2.pres <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session2 %>% filter(condition=="present"),
+     family = binomial)
+
+summary(mS2.pres)
+
+
+mS2.abs <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session2 %>% filter(condition=="absent"),
+     family = binomial)
+
+summary(mS2.abs)
+
+
+mS3.bt <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session3 %>% filter(condition=="back_turned"),
+     family = binomial)
+
+summary(mS3.bt)
+
+mS3.pres <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session3 %>% filter(condition=="present"),
+     family = binomial)
+
+summary(mS3.pres)
+
+
+mS3.abs <- glmer(
+     choice_binary ~ 1 + (1 | dog_name),
+     data = session3 %>% filter(condition=="absent"),
+     family = binomial)
+
+summary(mS3.abs)
+```
+#Exploratory: test performance against chance in each condition (trials pooled across sessions)
+```{r}
+#Present conditon
+subj.data.present<- xdata %>% 
+  left_join(dog_lookup) %>% 
+  filter(condition=="present") %>% 
+  group_by(dog_name, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=round(knower_pref/trials, 2),
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1]) %>% 
+  rowwise() %>%
+  mutate(p.binom.test = round(binom.test(knower_pref, trials, p = 0.5)$p.value, 3)) %>%
+  ungroup() %>% 
+  mutate(p.binom.fdr = round(p.adjust(p.binom.test, method = "BH"), 3))
+
+subj.data.present$dog_name[subj.data.present$p.binom.test<.05] # 8 dogs "Angus"   "Azzuro"  "Fleeti"  "Lucy20"  "Mickey3" "Molly8"  "Pepper5" "Preemo" 
+length(subj.data.present$dog_name[subj.data.present$p.binom.fdr<.05]) #none
+#copy values of knower pref to clipboard
+write.table(subj.data.present$prop_knower_pref, "clipboard",
+            row.names = FALSE, col.names = FALSE)
+
+
+#Absent conditon
+subj.data.absent<- xdata %>% 
+  left_join(dog_lookup) %>% 
+  filter(condition=="absent") %>% 
+  group_by(dog_name, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=round(knower_pref/trials, 2),
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1]) %>% 
+  rowwise() %>%
+  mutate(p.binom.test = round(binom.test(knower_pref, trials, p = 0.5)$p.value, 3)) %>%
+  ungroup() %>% 
+  mutate(p.binom.fdr = round(p.adjust(p.binom.test, method = "BH"), 3))
+
+subj.data.absent$dog_name[subj.data.absent$p.binom.test<.05] # 8 dogs "Brexit"  "Chilli5" "Chilli7" "Cuba"    "Holly9"  "Jabby"   "Magic4"  "Nero3"  
+subj.data.absent$dog_name[subj.data.absent$p.binom.fdr<.05] #2 survive FDR correction:  "Holly9" "Nero3" 
+
+write.table(subj.data.absent$prop_knower_pref, "clipboard",
+            row.names = FALSE, col.names = FALSE)
+
+#Back turned conditon
+subj.data.back.turned<- xdata %>% 
+  left_join(dog_lookup) %>% 
+  filter(condition=="back_turned") %>% 
+  group_by(dog_name, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=round(knower_pref/trials, 2),
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1]) %>% 
+  rowwise() %>%
+  mutate(p.binom.test = round(binom.test(knower_pref, trials, p = 0.5)$p.value, 3)) %>%
+  ungroup() %>% 
+  mutate(p.binom.fdr = round(p.adjust(p.binom.test, method = "BH"), 3))
+
+subj.data.back.turned$dog_name[subj.data.back.turned$p.binom.test<.05] # 4 dogs "Bookie"  "Dunni"   "Finley"  "Lieserl" 
+subj.data.back.turned$dog_name[subj.data.back.turned$p.binom.fdr<.05] #none survive FDR correction
+
+write.table(subj.data.back.turned$prop_knower_pref, "clipboard",
+            row.names = FALSE, col.names = FALSE)
+
+#Looking away conditon
+subj.data.looking.away<- xdata %>% 
+  left_join(dog_lookup) %>% 
+  filter(condition=="looking_away") %>% 
+  group_by(dog_name, condition) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=round(knower_pref/trials, 2),
+            sex=sex[1],
+            breed=breed[1],
+            age=age[1]) %>% 
+  rowwise() %>%
+  mutate(p.binom.test = round(binom.test(knower_pref, trials, p = 0.5)$p.value, 3)) %>%
+  ungroup() %>% 
+  mutate(p.binom.fdr = round(p.adjust(p.binom.test, method = "BH"), 3))
+
+subj.data.looking.away$dog_name[subj.data.looking.away$p.binom.test<.05] # 4 dogs "Molly8"  "Pepper5" "Ragnar"  "Silva"  
+subj.data.looking.away$dog_name[subj.data.looking.away$p.binom.fdr<.05] #none survive FDR correction
+
+write.table(subj.data.looking.away$prop_knower_pref, "clipboard",
+            row.names = FALSE, col.names = FALSE)
 ```
 
 # First trial only - session 1
@@ -545,6 +912,39 @@ confint_ft.prob4 <- logit_to_prob(confint_ft.icpt.mm4["(Intercept)", ])
 
 print(paste("Estimated probability:", round(prob_ft.intercept4, 3)))
 print(paste("95% CI for probability:", round(confint_ft.prob4, 3)))
+```
+### Icpt-only bin mod 5ft) present
+```{r}
+#Subset the data to keep only guesser absent
+ft.pres.data<-ft.data %>% 
+  filter(condition=="present")
+```
+
+ 
+```{r}
+# Run model
+ft.icpt.mm5=glmer(choice_binary ~ 1 +
+                   (1|dog_id),
+             data=ft.pres.data, family=binomial, 
+            control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+
+```
+
+```{r}
+# Evaluate results
+# Test if response probability is different from chance (0, on the logit scale)
+summary(ft.icpt.mm5)
+#dogs' performance not significantly different from chance in the first trial of
+# the present condition
+
+#transform logit scale values to probability values
+confint_ft.icpt.mm5 <- confint(ft.icpt.mm5, method = "Wald")
+logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
+prob_ft.intercept5 <- logit_to_prob(fixef(ft.icpt.mm5)[1])
+confint_ft.prob5 <- logit_to_prob(confint_ft.icpt.mm5["(Intercept)", ])
+
+print(paste("Estimated probability:", round(prob_ft.intercept5, 3)))
+print(paste("95% CI for probability:", round(confint_ft.prob5, 3)))
 ```
 # First trial - all sessions
 ```{r}
@@ -769,6 +1169,88 @@ mm1_choice_output_table <-
 write.csv(mm1_choice_output_table, file = "saves/mm1_choice_output_table_all_dogs_all_sessions.csv")
 ```
 
+# Arms crossing
+
+```{r}
+#plot
+arms.crossing.data<-model.data %>% 
+  mutate(arms_crossing=as.factor(ifelse(experimenter_left_pointing<experimenter_right_pointing, "no", "yes")))
+
+data.crossing<- arms.crossing.data %>% 
+  group_by(dog_id, condition, arms_crossing) %>% 
+  summarise(knower_pref=sum(choice_binary),
+            trials=length(choice_binary),
+            prop_knower_pref=knower_pref/trials)
+
+plot.data.crossing <- data.crossing %>% 
+  group_by(condition, arms_crossing) %>% 
+  summarise(total_trials = sum(trials, na.rm = TRUE),
+            avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+            se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se)   # Upper 95% CI
+
+
+# heights where the bars should be drawn
+# y_base  <- 0.64   # first bar height
+# spacing <- 0.018   # vertical spacing between bars
+
+plot.data.crossing$bar_id <-as.character(interaction(plot.data.crossing$condition, plot.data.crossing$arms_crossing))
+#We create a new variable giving the identity of each bar of our plot
+
+plot.data.crossing$bar_color <- c("#A8E1D8", "#F4C1C1",
+                                  "#66C3B3", "#E98989",   
+                                  "#1A8F87", "#C94C4C",  
+                                  "#01665E", "#7F1D1D") 
+
+#violet <- c("#E1C8F2", "#B88AD9", "#7A4FA3", "#3F1E63")
+
+
+### -----------------------------------------------------------
+### Build the bar plot
+### -----------------------------------------------------------
+library(scales)
+bar_plot_crossing <- ggplot(plot.data.crossing, 
+            aes(x = condition, 
+                y = avg_knower_pref, 
+                fill = bar_id, 
+                group = arms_crossing)) +
+  geom_col(position = position_dodge(width = 0.9),
+           color = "black") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0.2, 
+                position = position_dodge(width = 0.9)) +
+   geom_text(aes(x = 0.78, y = 0.63, label = "*"), size = 8) +
+   geom_text(aes(x = 1.78, y = 0.63, label = "*"), size = 8) +
+   #geom_text(aes(x = 2.23, y = 0.8, label = "*"), size = 8) +
+   geom_text(aes(x = 2.77, y = 0.66, label = "*"), size = 8) +
+   #geom_text(aes(x = 4.23, y = 0.7, label = "*"), size = 8) +
+  geom_text(aes(x = condition, y = 0.05, label = paste0("n=", total_trials)),
+            position = position_dodge(width = 0.9),
+            color = "black", size = 4, fontface = "bold") +
+  geom_hline(yintercept = 0.5, lty = 2) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_manual(values = setNames(plot.data.crossing$bar_color,
+                                      plot.data.crossing$bar_id)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  ylab("Percentage of choice for the Knower") +
+  xlab("Condition") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+
+#error bars show 95% CI in all cases
+bar_plot_crossing
+```
+```{r}
+# save arms crossing plot
+ggsave("./plots/Fig_S5_bar_plot_arms_crossing.png", bar_plot_crossing, width = 9, height = 6, scale=0.8, dpi = 1200)
+```
+
+
 ```{r}
 save.image("./workspace/guesser_knower_workspace_all_dogs_all_sessions.RData")
 ```
@@ -987,7 +1469,7 @@ test_retest_p
 ggsave(test_retest_p, filename = "plots/density_plot_test_re-test_rel.png", width = 12, height = 15, scale = 0.6, bg = "white", dpi=1200) 
 ```
 
-#Between conditions 
+#Between conditions, pooled across all 3 sessions 
 ```{r}
 #pool sessions together
 conditions_data <- xdata %>%
@@ -1020,10 +1502,6 @@ corr_across_conditions
 ```
 # Plot corr across conditions
 ```{r}
-# conditions_data<-conditions_data %>% 
-#   rename("looking away"=looking_away) %>% 
-#   rename("back turned" =back_turned)
-
 pairs_of_conds <- tribble(
   ~x,            ~y,
   "absent",      "back turned",
@@ -1042,10 +1520,10 @@ make_corr_plot <- function(data, x, y) {
   p  <- round(ct$p.value, 3)
   
   ggplot(data, aes(x = .data[[x]], y = .data[[y]])) +
-    geom_point(size = 2, alpha = .7) +
+    geom_point(size = 2, alpha = .5) +
     geom_smooth(method = "lm", se = FALSE) +
     geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-    annotate("text", x = 0.1, y = 0.9,
+    annotate("text", x = 0.7, y = 0.1,
              label = paste0("r = ", r, "\np = ", p),
              hjust = 0, size = 4) +
     scale_x_continuous(limits = c(0,1)) +
@@ -1064,7 +1542,8 @@ plots <- pmap(pairs_of_conds, ~ make_corr_plot(conditions_data, ..1, ..2))
 plots[[1]]  # first plot
 # or arrange all 6:
 library(patchwork)
-corr_cond_plot<-(plots[[1]] + plots[[2]] + plots[[3]]) / (plots[[4]] + plots[[5]] + plots[[6]])
+corr_cond_plot<-(plots[[1]] + plots[[2]] + plots[[3]]) / (plots[[4]] + plots[[5]] + plots[[6]]) + 
+                 plot_annotation(tag_levels = "a")
 ```
 #Save plot corr across conditions
 ```{r}
@@ -1073,8 +1552,8 @@ ggsave(
   plot = corr_cond_plot,
   width = 18,
   height = 12,
-  scale= .6,
-  dpi = 300
+  scale= .7,
+  dpi = 1200
 )
 ```
 
@@ -1088,30 +1567,33 @@ corrplot(corr_matrix, method = "color",
   tl.srt = 25)
 
 ```{r}
-#LL: add these to manuscript (SM), but first adapt to be consistent with above - data of all sessions pooled together
-
-#First session
-cor_across_condition_tot <- xdata %>%
-   filter (session == 1)  %>%
-  group_by(dog_id, condition) %>%
-  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+#First session - correlations between conditions
+conditions_data_S1 <- session1 %>% 
+    group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>% #performance in each condition
   pivot_wider(names_from = condition, values_from = mean_choice)
-sub_conditions <- cor_across_condition_tot[, -1] %>%
-  dplyr::select(present, absent, back_turned, looking_away) %>%
-  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
-  as.data.frame() 
 
-#correlations
-corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
-print(corr_matrix)
+condition_cols <- c("absent", "back_turned", "looking_away", "present")
+pairs_cond <- combn(condition_cols, 2) 
+#Within each condition separately (one average value per dog)
 
-#p_values
-p_matrix <- cor_pmat(sub_conditions)
-print(round(p_matrix, 4))
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
 
-colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
-rownames(corr_matrix) <- colnames(corr_matrix)
+corr_across_conditions_S1 <- apply(pairs, 2, \(p) {
+  a <- conditions_data_S1 [[p[1]]]   # numeric vector
+  b <- conditions_data_S1 [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
 
+corr_across_conditions_S1
+#1 = abs vs back turned
+#2 = abs vs la
+#3 = abs vs pres 
+#4 = bt vs la
+#5 = bt vs pres
+#6 = la vs pres
+#none is significant
 ```
 
 corrplot( corr_matrix, method = "color",
@@ -1123,57 +1605,62 @@ corrplot( corr_matrix, method = "color",
   tl.srt = 25)
 
 ```{r}
-#Second session
-cor_across_condition_tot <- xdata %>%
-  filter (session == 2)  %>%
-  group_by(dog_id, condition) %>%
-  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+#Second session - correlations between conditions
+conditions_data_S2 <- session2 %>% 
+    group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>% #performance in each condition
   pivot_wider(names_from = condition, values_from = mean_choice)
-sub_conditions <- cor_across_condition_tot[, -1] %>%
-  dplyr::select(present, absent, back_turned, looking_away) %>%
-  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
-  as.data.frame() 
 
-#correlations
-corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
-print(corr_matrix)
+condition_cols <- c("absent", "back_turned", "looking_away", "present")
+pairs_cond <- combn(condition_cols, 2) 
+#Within each condition separately (one average value per dog)
 
-#p_values
-p_matrix <- cor_pmat(sub_conditions)
-print(round(p_matrix, 4))
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
 
-colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
-rownames(corr_matrix) <- colnames(corr_matrix)
-colnames(p_matrix) <- str_to_title(str_replace_all(colnames(p_matrix), "_", " "))
-rownames(p_matrix) <- colnames(p_matrix)
+corr_across_conditions_S2 <- apply(pairs, 2, \(p) {
+  a <- conditions_data_S2 [[p[1]]]   # numeric vector
+  b <- conditions_data_S2 [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
+
+corr_across_conditions_S2
+#1 = abs vs back turned
+#2 = abs vs la
+#3 = abs vs pres signif.
+#4 = bt vs la
+#5 = bt vs pres
+#6 = la vs pres
 
 ```
 
 ```{r}
-#Third session
-cor_across_condition_tot <- xdata %>%
-  filter (session == 3)  %>%
-  group_by(dog_id, condition) %>%
-  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+#Third session - correlations between conditions
+conditions_data_S3 <- session3 %>% 
+    group_by(dog_id, condition) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>% #performance in each condition
   pivot_wider(names_from = condition, values_from = mean_choice)
-sub_conditions <- cor_across_condition_tot[, -1] %>%
-  dplyr::select(present, absent, back_turned, looking_away) %>%
-  dplyr::mutate(across(everything(), ~ as.numeric(as.character(.)))) %>%
-  as.data.frame() 
 
-#correlations
-corr_matrix <- cor(sub_conditions, use = "pairwise.complete.obs", method = "pearson")
-print(corr_matrix)
+condition_cols <- c("absent", "back_turned", "looking_away", "present")
+pairs_cond <- combn(condition_cols, 2) 
+#Within each condition separately (one average value per dog)
 
-#p_values
-p_matrix <- cor_pmat(sub_conditions)
-print(round(p_matrix, 4))
+#Pairwise complete Pearson's correlation tests (i.e. only including rows in which both sessions have values)
 
-colnames(corr_matrix) <- str_to_title(str_replace_all(colnames(corr_matrix), "_", " "))
-rownames(corr_matrix) <- colnames(corr_matrix)
-colnames(p_matrix) <- str_to_title(str_replace_all(colnames(p_matrix), "_", " "))
-rownames(p_matrix) <- colnames(p_matrix)
+corr_across_conditions_S3 <- apply(pairs, 2, \(p) {
+  a <- conditions_data_S3 [[p[1]]]   # numeric vector
+  b <- conditions_data_S3 [[p[2]]]   # numeric vector
+  ok <- complete.cases(a, b)
+  cor.test(a[ok], b[ok], method = "pearson")
+})
 
+corr_across_conditions_S3
+#1 = abs vs back turned
+#2 = abs vs la
+#3 = abs vs pres 
+#4 = bt vs la
+#5 = bt vs pres
+#6 = la vs pres
 ```
 
 
@@ -1340,12 +1827,12 @@ data.plot.vs.catala$bar_color <- my_cols
 present_catala <- data.frame(
       condition = "Present", avg_knower_pref = 0.5637,se = NA,
       ci_lower = 0.495,ci_upper = 0.629,
-      studies = "catala",bar_color="#E1D8A8", #"#C69C6D"
+      studies = "catala",bar_color="#C69C6D", #"#E1D8A8"
       total_trials = 374)
 absent_catala <- data.frame(
       condition = "Absent", avg_knower_pref = 0.72375, se = NA,
       ci_lower = 0.659, ci_upper = 0.787, 
-      studies = "catala", bar_color="#C3B366", #"#996633"
+      studies = "catala", bar_color="#996633",  #"C3B366"
       total_trials = 372)
 back_turned_catala <-data.frame(
       condition = "Back turned", avg_knower_pref = NA, se = NA,
@@ -1355,7 +1842,7 @@ back_turned_catala <-data.frame(
 looking_away_catala <- data.frame(
       condition = "Looking away", avg_knower_pref = 0.6175, se = NA,
       ci_lower = 0.565, ci_upper = 0.669, 
-      studies = "catala", bar_color="#665001",#"#59341F"
+      studies = "catala", bar_color="#59341F",#"#665001"
       total_trials = 382)
 
 data.plot.vs.catala <- bind_rows(looking_away_catala,data.plot.vs.catala)
@@ -1369,7 +1856,7 @@ data.plot.vs.catala$condition <- factor(data.plot.vs.catala$condition,
 #we put the conditions name as factor
 data.plot.vs.catala$bar_id <-as.character(interaction(data.plot.vs.catala$condition, data.plot.vs.catala$studies))
 #We create a new variable giving the identity of each bar of our plot
-data.plot.vs.catala$pattern <- ifelse(data.plot.vs.catala$studies == "catala", "stripe", "none")
+
 print (data.plot.vs.catala)
 
 
@@ -1391,11 +1878,11 @@ bar_plot_vs_catala <- ggplot(data.plot.vs.catala,
   geom_text(aes(x = 2.23, y = 0.8, label = "*"), size = 8) +
   geom_text(aes(x = 2.77, y = 0.66, label = "*"), size = 8) +
   geom_text(aes(x = 4.23, y = 0.7, label = "*"), size = 8) +
-  geom_text(aes(x = condition, y = 0.2, label = paste0("n=", total_trials)),
+  geom_text(aes(x = condition, y = 0.05, label = paste0("n=", total_trials)),
             position = position_dodge(width = 0.9),
             color = "black", size = 4, fontface = "bold") +
   geom_hline(yintercept = 0.5, lty = 2) +
-  coord_cartesian(ylim = c(0.2, 0.8)) +
+  coord_cartesian(ylim = c(0, 1)) +
   scale_fill_manual(values = setNames(data.plot.vs.catala$bar_color,
                                       data.plot.vs.catala$bar_id)) +
   scale_y_continuous(labels = label_percent(accuracy = 1)) +
@@ -1412,12 +1899,11 @@ bar_plot_vs_catala <- ggplot(data.plot.vs.catala,
 
 bar_plot_vs_catala 
 #error bars show 95% CI in all cases
-#striped version of each color is Catala et al. (2017) study
 ```
 # Save Catala comparison plot - ms
 ```{r}
 #save the barplot
-ggsave(bar_plot_vs_catala, filename = "plots/barplot_all_sessions_all_dogs_comparison_with_Catala.png", width = 10, height = 6, scale = 0.7)
+ggsave(bar_plot_vs_catala, filename = "plots/barplot_all_sessions_all_dogs_comparison_with_Catala.png", width = 9, height = 6, scale = 0.7)
 ```
 
 # Individual performance
@@ -1432,10 +1918,47 @@ which(subj.data.test$pval.binom<.05)
 #apply FDR choice_binaryion using the Benjamini–Hochberg method
 subj.data.test$pval.binom.fdr <- p.adjust(subj.data.test$pval.binom, method = "BH")
 which(subj.data.test$pval.binom.fdr<.05)
- #after applying false discovery rate choice_binaryion, none of the individual performances is significantly above chance level
+ #after applying false discovery rate choice_binary, none of the individual performances is significantly above chance level
 
 mean(subj.data.test$trials)
+
+#dataset with only the 9 dogs who (at least descriptively performed better in the test conditions)
+better.performing.dogs<-subj.data.test %>% 
+filter(pval.binom<.05)    
 ```
+```{r}
+#save table as csv
+kd<- better.performing.dogs
+kd[] <- lapply(kd, function(x) {
+  if (is.numeric(x)) round(x, 3) else x
+})
+
+# Rename columns
+names(kd)[names(kd) == "pval.binom"] <- "p-value_binomial_test_knower_pref"
+names(kd)[names(kd) == "pval.binom.fdr"] <- "p-value_corrected"
+names(kd)[names(kd) == "knower_pref"] <- "nr_trials_chose_knower"
+names(kd)[names(kd) == "trials"] <- "nr_trials"
+  
+dog_lookup <- xdata %>%
+  select(dog_id, dog_name) %>%
+  distinct(dog_id, dog_name)  
+
+kd <- kd %>%
+  left_join(dog_lookup, by = "dog_id") %>%
+  mutate(dog_id = dog_name) %>%  # overwrite values
+  select(-dog_name)
+  
+
+# Save to CSV (no row names)
+write.csv(kd, "saves/knower.discriminating.dogs.csv", row.names = FALSE)
+```
+
+```{r}
+# report pvalues of binomial tests for dogs' performance in each condition separately (pooled across sessions)
+
+```
+
+
 # Individual plots
 ```{r}
 library(Hmisc)  # binconf
@@ -1585,7 +2108,7 @@ number_of_choice = sum (pref_LR)
 #at the individual level (binomial tests, BH choice_binary p-values) - (could also be a bias for the experimenter)
 side.bias.data<-xdata %>%
   mutate(choice_LR_binary=ifelse(choice_LR=="L",1,0)) %>% 
-  group_by(dog_name) %>% 
+  group_by(dog_name, dog_id) %>% 
   summarise(mean_left=mean(choice_LR_binary),
             n_choice_left=sum(choice_LR_binary),
             n_trials=length(choice_LR_binary)) %>% 
@@ -1596,6 +2119,7 @@ side.bias.data<-xdata %>%
 
 which(side.bias.data$p.binom.fdr<.05)
 dogs.w.side.pref<-side.bias.data$dog_name[side.bias.data$p.binom.fdr<.05]
+dogs.w.side.pref.id<-side.bias.data$dog_id[side.bias.data$p.binom.fdr<.05]
 
 side.bias.dogs<-side.bias.data %>% 
   filter(dog_name %in% dogs.w.side.pref) %>% 
@@ -1716,7 +2240,74 @@ sb_model_output_table <-
 
 write.csv(sb_model_output_table, file = "saves/side_pref_model_output_table_all_dogs_all_sessions.csv")
 ```
+#### Plot performance of only dogs without a side bias
+```{r}
+
+plot.data_no_sb <- subj.data.cond %>% 
+  filter(!(dog_id %in% dogs.w.side.pref.id)) %>% 
+  droplevels() %>% #41 dogs left in this plot
+  mutate(condition=fct_recode(condition, 
+                                "back turned" = "back_turned", 
+                                "looking away" = "looking_away"),
+                condition = fct_relevel(condition, "present")) %>% 
+  group_by(condition) %>% 
+  summarise(avg_knower_pref=mean(prop_knower_pref, na.rm=T),
+            se = sd(prop_knower_pref, na.rm = TRUE) / sqrt(n()),  # Standard Error
+    ci_lower = avg_knower_pref - qt(0.975, df = n() - 1) * se,  # Lower 95% CI
+    ci_upper = avg_knower_pref + qt(0.975, df = n() - 1) * se)   # Upper 95% CI
+
+
+#Error bars show 95% confidence intervals; 
+#asterisk indicates significance of the comparison with chance level (icpt only models)
+
+my_cols <- c("#A8E1D8", "#66C3B3", "#1A8F87", "#01665E")
+
+# heights where the bars should be drawn
+y_base  <- 0.64   # first bar height
+spacing <- 0.018   # vertical spacing between bars
+
+bar_plot_no_sb <- ggplot(
+  data = plot.data_no_sb,
+  aes(x = condition, y = avg_knower_pref, fill = condition)
+) + 
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+  geom_hline(yintercept = 0.5, linetype = 2, col="red") +
+  # geom_text(aes(x = 1, y = 0.61, label = "*"), col="red", size = 8) +
+  # geom_text(aes(x = 2, y = 0.60, label = "*"), col="red", size = 8) +
+  # geom_text(aes(x = 3, y = 0.62, label = "*"), col="red", size = 8) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_manual(values = my_cols) +
+  ylab("Average knower preference") +
+  ggtitle("Knower preference - dogs without side bias (N=41)") +
+  theme_bw() +
+  # # significance bars 
+  # # 1 vs 4
+  # geom_segment(aes(x = 1, xend = 4, y = y_base, yend = y_base)) +
+  # annotate("text", x = 2.5, y = y_base + 0.002, label = "*", size = 8) +
+  # # 2 vs 4
+  # geom_segment(aes(x = 2, xend = 4, y = y_base + spacing, 
+  #                  yend = y_base + spacing)) +
+  # annotate("text", x = 3, y = y_base + 0.02, label = "*", size = 8) +
+  # # 3 vs 4
+  # geom_segment(aes(x = 3, xend = 4, y = y_base + 2*spacing, 
+  #                  yend = y_base + 2*spacing)) +
+  # annotate("text", x = 3.5, y = y_base + spacing + 0.02, 
+  #          label = "*", size = 8) +
+   theme(
+   axis.text = element_text(size = 11),
+    axis.title = element_text(size = 12)) 
+
+bar_plot_no_sb
+```
+```{r}
+#save the barplot
+ggsave(bar_plot_no_sb , filename = "plots/barplot_all_sessions_all_dogs_no_side_bias.png", width = 9, height = 6, scale = 0.7, dpi=1200)
+```
+
+
 # Win-stay/lose-shift and  Win-Shift/Lose-Stay strategies
+#### switches between informants
 ```{r include=FALSE}
 strategy_data <- xdata%>%
   filter(condition!="present") %>% #present condition removed because in it dogs got rewarded even when choosing guesser
@@ -1761,9 +2352,8 @@ strategy_data <- xdata%>%
         )
       )
     )
-  ) 
+  )
 ```
-
 
 ```{r  include=FALSE}
 strategy.data.agg <- strategy_data %>%
@@ -1771,11 +2361,52 @@ strategy.data.agg <- strategy_data %>%
   summarise(
     mean_choice_binary = mean(choice_binary, na.rm=T),
     mean_win_stay_lose_shift = mean(win_stay_lose_shift, na.rm=T),
-    mean_win_shift_lose_stay = mean(win_shift_lose_stay, na.rm=T)
+    mean_win_shift_lose_stay = mean(win_shift_lose_stay, na.rm=T),
+    trials = length(choice_binary),
+    knower_pref = sum(choice_binary),
+    win_shift_pref = sum(win_shift_lose_stay, na.rm=T)
   ) %>%
   ungroup()
 ```
 
+```{r include=FALSE}
+#table with individuals using this strategy more often (test conditions only)
+
+#extract p-values of binomial tests for all dogs, all sessions, only in the test conditions
+strategy.data.agg$pval.binom <- mapply(
+  function(k, n) binom.test(k, n)$p.value,
+  strategy.data.agg$win_shift_pref,
+  strategy.data.agg$trials
+) 
+  
+which(strategy.data.agg$pval.binom<.05) #only 4 dogs used the win-shift-lose-stay strategy significantly (Akira8, Aramis8, Jabby and Ragnar)
+#apply FDR choice_binaryion using the Benjamini–Hochberg method
+strategy.data.agg$pval.binom.fdr <- p.adjust(strategy.data.agg$pval.binom, method = "BH")
+which(strategy.data.agg$pval.binom.fdr<.05)
+#after applying false discovery rate choice_binaryion, none of the individual use of the strategy is significantly different from chance level
+
+mean(subj.data.test$trials)
+
+#dataset with only the 9 dogs who (at least descriptively performed better)
+win.shift.using.dogs<-strategy.data.agg %>% 
+filter(pval.binom<.05)
+```
+
+
+```{r include=FALSE}
+#save table as csv
+wsd<- win.shift.using.dogs
+wsd[] <- lapply(wsd, function(x) {
+  if (is.numeric(x)) round(x, 2) else x
+})
+
+# Rename columns
+names(wsd)[names(wsd) == "pval.binom"] <- "p-value_binomial_test"
+names(wsd)[names(wsd) == "pval.binom.fdr"] <- "p-value_binomial_test_corrected"
+
+# Save to CSV (no row names)
+write.csv(wsd, "saves/win.shift.using.dogs.csv", row.names = FALSE)
+```
 
 ```{r include=FALSE}
 #Pearson correlation of choice_binary performance (choice of Knower) and win stay lose shift strategy
@@ -1864,6 +2495,10 @@ For each test trial (excluding the first trial in each condition block), we calc
 # Save startegies plot
 ```{r}
 ggsave(strategies.p, filename = "plots/win_stay_lose_shift_strategies.png", width = 10, height = 10, scale=0.8, bg = "white", dpi=1200) 
+```
+#### switches between cups
+```{r}
+#LL: create left-right cup chosen varibale and re-do the above analyses
 ```
 
 # Inter-observer reliability (choice - binary variable)
