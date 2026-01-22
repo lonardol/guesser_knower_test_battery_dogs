@@ -2527,26 +2527,6 @@ library(irr)
 kappa_result <- kappa2(reliab.data[, c("original_code_fct", "recoding_fct")], "unweighted")
 kappa_result
 #Trials = 2278; Scorings = 2 Kappa = 0.991 z = 7.25 p-value = 4.3e-13 
-
-
-
-library(tidyr)
-long.reliab.data <- pivot_longer(reliab.data, cols = c(recoding_FL, original_code),
-                          names_to = "rater", values_to = "rating")
-
-str(long.reliab.data)
-summary(long.reliab.data$rating)
-
-#binomial GLMM to test if the rater has an influence on the rating
-reliab.glmm <- glmer(rating ~ rater + (1 | dog_name), data = long.reliab.data,
-               family = binomial)
-
-round(summary(reliab.glmm)$coefficients,2)
-
-round(drop1(reliab.glmm, test="Chisq"),3)
-
-#fixed effect for rater not significant, not suggesting significant disagreement 
-#between coders
 ```
 
 
