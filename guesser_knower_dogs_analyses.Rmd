@@ -1991,6 +1991,7 @@ ind.plot.data <- xdata %>%
 # Session colors
 session_colors <- brewer.pal(3, "Dark2")
 names(session_colors) <- levels(ind.plot.data$session)
+dodge <- position_dodge(width = 0.4)
 
 # Create folder
 dir.create("./plots/individual_plots", recursive = TRUE, showWarnings = FALSE)
@@ -2004,16 +2005,19 @@ for(dog in dogs){
   p <- ggplot(tmp, aes(x = condition, y = knower_pref, color = session)) +
     
     # Error bars
-    geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2, size = 0.8) +
+    #geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2, size = 0.8) +
     
     # Points
-    geom_point(size = 3) +
+    geom_point(size = 3, position = dodge) +
     
     # Dashed lines connecting same session
-    geom_line(aes(group = session), linetype = "solid", size = 0.8) +
+    geom_line(aes(group = session), linetype = "solid", linewidth = 0.8,  position = dodge) +
     
     # Chance line
     geom_hline(yintercept = 0.5, linetype = "dashed", col="red") +
+    
+    # Y axis lim
+    ylim(0,1) +
     
     # Color scale
     scale_color_manual(values = session_colors) +
@@ -2056,12 +2060,13 @@ for(i in seq_along(dog_groups)){
     tmp <- filter(ind.plot.data, dog_name == dog)
     
     p <- ggplot(tmp, aes(x = condition, y = knower_pref, color = session)) +
-  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2, size = 0.8) +
-  geom_point(size = 3) +
-  geom_line(aes(group = session), linetype = "solid", size = 0.8) +
+ # geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), width = 0.2, size = 0.8) +
+  geom_point(size = 3, position = dodge) +
+  geom_line(aes(group = session), linetype = "solid", linewidth = 0.8, position = dodge) +
   geom_hline(yintercept = 0.5, linetype = "dashed", col = "red") +
   scale_color_manual(values = session_colors) +
   labs(title = dog, x = "Condition", y = "Knower Preference", color = "Session") +
+      ylim(0,1) +
   theme_minimal() +  # base theme applied first
   theme(
     axis.title = element_text(size = 17),
