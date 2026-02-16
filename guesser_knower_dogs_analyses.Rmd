@@ -11,7 +11,7 @@ output: html_document
 library(tidyverse)
 library(ggplot2)
 library(lme4)
-library(summarytools)
+#library(summarytools)
 library(car)
 library(lmerTest)
 library(forcats)
@@ -1361,6 +1361,200 @@ corr_across_sessions_la  <- apply(pairs, 2, \(p) {
 corr_across_sessions_la 
 #in the looking away condition, performance correlates significantly between S1-S2, S1-S3 but not S2-S3
 ```
+
+## CV: test-retest
+```{r}
+
+
+levels(as.factor(xdata$condition))
+#Average knower preference in each condition and session per dog
+cor_across_session <- xdata %>%
+  filter(condition != "looking_away") %>%
+  group_by(dog_id, session) %>%
+  summarise(mean_choice = mean(choice_binary, na.rm = TRUE),
+            .groups = "drop") %>%
+  pivot_wider(names_from = session,
+              values_from = mean_choice,
+              names_prefix = "session_") #1 column per session
+
+#Average knower preference in each condition and session per dog
+cor_across_session_con <- xdata %>%
+  filter(condition != "looking_away") %>%
+  group_by(dog_id, session, condition) %>%
+  summarise(mean_choice = mean(choice_binary, na.rm = TRUE),
+            .groups = "drop") %>%
+  pivot_wider(names_from = session,
+              values_from = mean_choice,
+              names_prefix = "session_") #1 column per session
+
+cor.test(cor_across_session$session_1, cor_across_session$session_2)
+cor.test(cor_across_session$session_1, cor_across_session$session_3)
+cor.test(cor_across_session$session_2, cor_across_session$session_3)
+
+```
+```{r}
+library(tidyverse)
+
+delay_df <- tibble(
+  comparison = c("1-2", "2-3", "1-3"),
+  mean_delay = c(mean_delay_1_2, mean_delay_2_3, mean_delay_1_3)
+)
+```
+
+
+```{r}
+cor_overall <- cor_across_session %>%
+  pivot_longer(
+    cols = starts_with("session_"),
+    names_to = "session",
+    values_to = "mean_choice"
+  ) %>%
+  mutate(session = str_remove(session, "session_")) %>%
+  pivot_wider(names_from = session, values_from = mean_choice) %>%
+  summarise(
+    cor_1_2 = cor(`1`, `2`, use = "complete.obs"),
+    cor_2_3 = cor(`2`, `3`, use = "complete.obs"),
+    cor_1_3 = cor(`1`, `3`, use = "complete.obs")
+  ) %>%
+  pivot_longer(
+    everything(),
+    names_to = "comparison",
+    values_to = "correlation"
+  ) %>%
+  mutate(
+    comparison = dplyr::recode(
+      comparison,
+      cor_1_2 = "1-2",
+      cor_2_3 = "2-3",
+      cor_1_3 = "1-3"
+    ),
+    condition = "overall"
+  )
+```
+
+Compute correlations per conditions
+```{r}
+cor_by_condition <- cor_across_session_con %>%
+  pivot_longer(
+    cols = starts_with("session_"),
+    names_to = "session",
+    values_to = "mean_choice"
+  ) %>%
+  mutate(session = str_remove(session, "session_")) %>%
+  pivot_wider(names_from = session, values_from = mean_choice) %>%
+  group_by(condition) %>%
+  summarise(
+    cor_1_2 = cor(`1`, `2`, use = "complete.obs"),
+    cor_2_3 = cor(`2`, `3`, use = "complete.obs"),
+    cor_1_3 = cor(`1`, `3`, use = "complete.obs"),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = starts_with("cor_"),
+    names_to = "comparison",
+    values_to = "correlation"
+  ) %>%
+  mutate(
+    comparison = dplyr::recode(
+      comparison,
+      cor_1_2 = "1-2",
+      cor_2_3 = "2-3",
+      cor_1_3 = "1-3"
+    )
+  )
+```
+
+```{r}
+plot_data <- bind_rows(cor_overall, cor_by_condition) %>%
+  left_join(delay_df, by = "comparison")
+```
+
+
+```{r}
+library(tidyverse)
+library(ggsci)
+
+plot_data_pretty <- plot_data %>%
+  mutate(
+    condition = dplyr::recode(
+      condition,
+      back_turned = "back turned"
+    ),
+    condition = factor(
+      condition,
+      levels = c(
+        "overall",
+        sort(setdiff(unique(condition), "overall"))
+      )
+    )
+  )
+
+p_corr_coefficients  <- ggplot(
+  plot_data_pretty,
+  aes(
+    x = mean_delay,
+    y = correlation,
+    color = condition,
+    shape = condition
+  )
+) +
+  geom_line(aes(group = condition), linewidth = 0.8) +
+  geom_point(size = 3) +
+
+  # Colors: black for Overall, UChicago palette for others
+  scale_color_manual(
+    values = c(
+      "overall" = "black",
+      setNames(
+        pal_uchicago()(nlevels(plot_data_pretty$condition) - 1),
+        levels(plot_data_pretty$condition)[-1]
+      )
+    )
+  ) +
+
+  scale_shape_manual(values = c(16, 17, 15, 18, 3, 7)) +
+
+  # ---- AXES ----
+  scale_y_continuous(
+    limits = c(-0.1, 0.35),
+    breaks = seq(-0.1, 0.4, by = 0.1),
+   # minor_breaks = seq(0, 0.35, by = 0.05),
+    expand = expansion(mult = c(0, 0))
+  ) +
+  scale_x_continuous(
+    limits = c(80, 240),
+    breaks = seq(80, 240, by = 20),
+    minor_breaks = seq(80, 240, by = 10),
+    expand = expansion(mult = c(0, 0))
+  ) +
+
+  labs(
+    #title = "Test–retest correlations across time delays",
+    x = "Mean delay between sessions (days)",
+    y = "Test–retest correlation",
+    color = "Condition",
+    shape = "Condition") +
+
+  theme_classic(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 13, face = "bold"),
+    plot.caption = element_text(size = 10, hjust = 0),
+    axis.line = element_line(linewidth = 0.8),
+    axis.ticks = element_line(linewidth = 0.8),
+    axis.ticks.length = unit(0.2, "cm")
+  )
+
+ggsave(
+  filename = "plots/test_retest_delay_correlation.png",
+  plot = p_corr_coefficients,
+  width = 6.5,      # inches (APA single-column ≈ 6–7 in)
+  height = 4.5,
+  dpi = 300
+)
+```
+
+
+
 
 ## Plot correlations in performance across sessions
 ```{r}
