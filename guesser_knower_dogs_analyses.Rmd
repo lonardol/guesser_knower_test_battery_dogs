@@ -1,6 +1,6 @@
 ---
 title: "guesser_knower_test_battery_dogs"
-author: "Lucrezia Lonardo"
+author: "XXX"
 date: "2025-02-27"
 output: html_document
 ---
@@ -11,6 +11,7 @@ output: html_document
 library(tidyverse)
 library(ggplot2)
 library(lme4)
+library(ggsci)
 #library(summarytools)
 library(car)
 library(lmerTest)
@@ -179,7 +180,7 @@ count_guesser_id["SAD"]/(sum(xdata$knower_id=="SAD") + sum(xdata$guesser_id=="SA
 count_hider_id["SAD"]/(sum(xdata$knower_id=="SAD") + sum(xdata$guesser_id=="SAD") + sum(xdata$hider_id=="SAD"))
 
 ```
-###Time between sessions #LL: remove and remove column test date from data file
+###Time between sessions 
 ```{r}
 date_data <- xdata %>%
   mutate(test_date = as.Date(test_date, format = "%d/%m/%Y")) %>%
@@ -302,7 +303,8 @@ plot.data<- subj.data.cond %>%
 #Error bars show 95% confidence intervals; 
 #asterisk indicates significance of the comparison with chance level (icpt only models)
 
-my_cols <- c("#A8E1D8", "#66C3B3", "#1A8F87", "#01665E")
+#my_cols <- c("#A8E1D8", "#66C3B3", "#1A8F87", "#01665E")
+chi_cols <- c("#FFA319FF", "#800000FF", "#767676FF", "#155F83FF")
 
 # heights where the bars should be drawn
 y_base  <- 0.64   # first bar height
@@ -355,7 +357,6 @@ emm.plot <- emmeans(
 ) %>%
   as.data.frame()
 
-
 set.seed(121)  # reproducible jitter
 
 box_plot_data <- subj.data.cond %>% 
@@ -399,7 +400,7 @@ boxplot <- ggplot(
     inherit.aes = FALSE,
     linewidth = 1.2,
     width = 0.15,
-    col="purple"
+    col="black"
   ) +
   # Model estimates
   geom_point(
@@ -414,11 +415,11 @@ boxplot <- ggplot(
 
   ylim(0, 1) +
   ylab("Proportion knower preference") +
-  geom_text(aes(x = 1, y = 0.95, label = "*"), col="red", size = 8) +
-  geom_text(aes(x = 2, y = 0.95, label = "*"), col="red", size = 8) +
-  geom_text(aes(x = 3, y = 0.95, label = "*"), col="red", size = 8) +
+  geom_text(aes(x = 1, y = 0.95, label = "***"), col="red", size = 8) +
+  geom_text(aes(x = 2, y = 0.95, label = "**"), col="red", size = 8) +
+  geom_text(aes(x = 3, y = 0.95, label = "***"), col="red", size = 8) +
   geom_hline(yintercept = 0.5, lty = 2, col = "red") +
-  scale_fill_manual(values = my_cols) +
+  scale_fill_manual(values = chi_cols) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -428,11 +429,12 @@ boxplot <- ggplot(
 
 boxplot
 
+
 ```
 
 ```{r}
 #save the boxplot
-ggsave(boxplot , filename = "plots/boxplot_all_sessions_all_dogs.png", width = 10, height = 6, scale=0.7, dpi = 1200)
+ggsave(boxplot , filename = "plots/boxplot_all_sessions_all_dogs.png", width = 9, height = 6, scale=0.7, dpi = 1200)
 ```
 # Plot barplot and boxplot together
 
@@ -894,7 +896,6 @@ ft.icpt.mm4=glmer(choice_binary ~ 1 +
 
 #Warning: Model is nearly unidentifiable: large eigenvalue ratio
  #- Rescale variables?
-#LL: due to large amount of 0s?
 ```
 
 ```{r}
@@ -991,7 +992,6 @@ ft.icpt.mm2.all.sessions=glmer(choice_binary ~ 1 +
 # Test if response probability is different from chance (0, on the logit scale)
 summary(ft.icpt.mm2.all.sessions) #In the bt condition, dogs preferred the knower above chance level, 65%, from trial 1 when including all sessions (p=0.002)
 
-#LL: to be adapted
 #transform logit scale values to probability values
 confint_icpt.mm2.all.sessions <- confint(ft.icpt.mm2.all.sessions, method = "Wald")
 logit_to_prob <- function(logit) exp(logit) / (1 + exp(logit))
@@ -1257,33 +1257,46 @@ save.image("./workspace/guesser_knower_workspace_all_dogs_all_sessions.RData")
 
 ##Correlation across sessions, per condition
 ```{r}
-#Average knower preference in each condition and session per dog
+#Average knower preference in each condition and session per dog, grouped by session and condition, all conditions included
 cor_across_session_cond_incl_contr <- xdata %>%
   group_by(dog_id, session, condition) %>%
   summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
   pivot_wider(names_from = session, values_from = mean_choice,
               names_prefix = "session_") #1 column per session
 
-#test conditions only
+#all conditions excluding GLA, grouped by session and condition
 cor_across_session_cond <- xdata %>%
   group_by(dog_id, session, condition) %>%
+   filter(condition!="looking_away"
+          #condition!="present",       #present condition included
+         ) %>% 
   summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
   pivot_wider(names_from = session, values_from = mean_choice,
-              names_prefix = "session_") %>%  #1 column per session
-  filter(condition!="present")
+              names_prefix = "session_")  #1 column per session
+ 
 
-cor_across_session_cond
+#all conditions excluding GLA, grouped by session
+cor_across_sessions <- xdata %>%
+   filter(condition!="looking_away"
+          #condition!="present",       #present condition included
+         ) %>% 
+  group_by(dog_id, session) %>%
+  summarise(mean_choice = mean(choice_binary), .groups = "drop")%>%
+  pivot_wider(names_from = session, values_from = mean_choice,
+              names_prefix = "session_")  #1 column per session
 
-#binomial GLMM 
-glmm_corr_across_sessions <- glmer(choice_binary ~ session + (1 | dog_id),
-                    data = xdata,
-                    family = binomial(link = "logit"))
-summary(glmm_corr_across_sessions)#performance does not increase or decrease linearly with increasing session number
 
-#Pearson correlation coefficients
-cor(cor_across_session_cond$session_1, cor_across_session_cond$session_2, use = "pairwise.complete.obs", method = "pearson") #S1-S2 r=0.35
-cor(cor_across_session_cond$session_1, cor_across_session_cond$session_3, use = "pairwise.complete.obs", method = "pearson") #S1-S3 r=0.15
-cor(cor_across_session_cond$session_2, cor_across_session_cond$session_3, use = "pairwise.complete.obs", method = "pearson") #S2-S3 r=0.23
+#Pearson correlation coefficients (data of the 3 sessions pooled over 3 conditions, excluding GLA)
+cor(cor_across_sessions$session_1, cor_across_sessions$session_2, use = "pairwise.complete.obs", method = "pearson") #S1-S2 r=0.32
+cor(cor_across_sessions$session_1, cor_across_sessions$session_3, use = "pairwise.complete.obs", method = "pearson") #S1-S3 r=0.14
+cor(cor_across_sessions$session_2, cor_across_sessions$session_3, use = "pairwise.complete.obs", method = "pearson") #S2-S3 r=0.19
+
+
+# #binomial GLMM 
+# glmm_corr_across_sessions <- glmer(choice_binary ~ session + (1 | dog_id),
+#                     data = xdata,
+#                     family = binomial(link = "logit"))
+# summary(glmm_corr_across_sessions)#performance does not increase or decrease linearly with increasing session number
 
 #aggregate knower pref across conditions to have one value per dog_name and session
 cor_across_sessions_cond_agg<-cor_across_session_cond %>% 
@@ -1303,7 +1316,7 @@ cor_across_sessions_all_conds <- apply(pairs_test_retest, 2, \(p) {
 })
 
 cor_across_sessions_all_conds
-#when pooling all test conditions together, performance correlates significantly between S1-S2 but not between S2-S3 and S1-S3
+#when pooling all above chance test conditions together, performance correlates significantly between S1-S2 but not between S2-S3 and S1-S3
 
 
 
@@ -1345,29 +1358,29 @@ corr_across_sessions_bt  <- apply(pairs, 2, \(p) {
 corr_across_sessions_bt 
 #in the back turned condition, performance correlates significantly between S1-S2 but not between S2-S3 and S1-S3
 
-# Looking away
-cor_across_session_la <- cor_across_session_cond %>% 
-  filter(condition=="looking_away")
+# Present
+cor_across_session_pres <- cor_across_session_cond_incl_contr  %>% 
+  filter(condition=="present")
 
 #Pairwise complete Person's correlation tests (i.e. only including rows in which both sessions have values)
 
-corr_across_sessions_la  <- apply(pairs, 2, \(p) {
-  a <- cor_across_session_la [[p[1]]]   # numeric vector
-  b <- cor_across_session_la [[p[2]]]   # numeric vector
+corr_across_sessions_pres  <- apply(pairs, 2, \(p) {
+  a <- cor_across_session_pres [[p[1]]]   # numeric vector
+  b <- cor_across_session_pres [[p[2]]]   # numeric vector
   ok <- complete.cases(a, b)
   cor.test(a[ok], b[ok], method = "pearson")
 })
 
-corr_across_sessions_la 
-#in the looking away condition, performance correlates significantly between S1-S2, S1-S3 but not S2-S3
+corr_across_sessions_pres 
+#in the present condition, performance correlates significantly between S1-S2, S2-S3 but not S1-S3
 ```
 
-## CV: test-retest
+## Test-retest
 ```{r}
 
 
 levels(as.factor(xdata$condition))
-#Average knower preference in each condition and session per dog
+#Average knower preference in each session per dog
 cor_across_session <- xdata %>%
   filter(condition != "looking_away") %>%
   group_by(dog_id, session) %>%
@@ -1387,9 +1400,9 @@ cor_across_session_con <- xdata %>%
               values_from = mean_choice,
               names_prefix = "session_") #1 column per session
 
-cor.test(cor_across_session$session_1, cor_across_session$session_2)
-cor.test(cor_across_session$session_1, cor_across_session$session_3)
-cor.test(cor_across_session$session_2, cor_across_session$session_3)
+cor.test(cor_across_session$session_1, cor_across_session$session_2) #r=32
+cor.test(cor_across_session$session_1, cor_across_session$session_3) #r=14
+cor.test(cor_across_session$session_2, cor_across_session$session_3) #r=19
 
 ```
 ```{r}
@@ -1428,7 +1441,7 @@ cor_overall <- cor_across_session %>%
       cor_2_3 = "2-3",
       cor_1_3 = "1-3"
     ),
-    condition = "overall"
+    condition = "overall" #all except GLA
   )
 ```
 
@@ -1471,9 +1484,6 @@ plot_data <- bind_rows(cor_overall, cor_by_condition) %>%
 
 
 ```{r}
-library(tidyverse)
-library(ggsci)
-
 plot_data_pretty <- plot_data %>%
   mutate(
     condition = dplyr::recode(
@@ -1484,7 +1494,7 @@ plot_data_pretty <- plot_data %>%
       condition,
       levels = c(
         "overall",
-        sort(setdiff(unique(condition), "overall"))
+        sort(setdiff(unique(condition), "overall")) #excluding GLA
       )
     )
   )
@@ -1551,116 +1561,6 @@ ggsave(
   height = 4.5,
   dpi = 300
 )
-```
-
-
-
-
-## Plot correlations in performance across sessions
-```{r}
-library(MASS)
-scores_wide <- xdata %>%
-  filter(condition!="present") %>% 
-  group_by(dog_name, condition, session) %>%
-  summarise(mean_score = mean(choice_binary, na.rm = TRUE), .groups = "drop") %>%
-  pivot_wider(names_from = session, values_from = mean_score, names_prefix = "session_") %>%
-  filter(!is.na(session_1) & !is.na(session_2) & !is.na(session_3))  %>%
-  mutate(condition = str_replace_all(condition, "_", " "),
-         condition = str_to_title(condition))
-
-#Function to calculate density
-get_density <- function(x, y, dens){
-  ix <- findInterval(x, dens$x)
-  iy <- findInterval(y, dens$y)
-  mapply(function(i, j) ifelse(i > 0 & j > 0, dens$z[i,j], NA), ix, iy)
-}
-# Compute density with scores between 0 and 1
-#Pair 1: session_1 vs session_2
-dens12 <- with(scores_wide, kde2d(session_1, session_2, n = 100))
-scores_wide$density_12 <- get_density(scores_wide$session_1, scores_wide$session_2, dens12)
-
-#Pair 2: session_1 vs session_3
-dens13 <- with(scores_wide, kde2d(session_1, session_3, n = 100))
-scores_wide$density_13 <- get_density(scores_wide$session_1, scores_wide$session_3, dens13)
-
-#Pair 3: session_2 vs session_3
-dens23 <- with(scores_wide, kde2d(session_2, session_3, n = 100))
-scores_wide$density_23 <- get_density(scores_wide$session_2, scores_wide$session_3, dens23)
-
-```
-
-```{r}
-## Make a plot for each pair (all test conditions)
-library(scales)
-#session_1 vs session_2
-S1_S2_p<-ggplot(scores_wide, aes(x = session_1, y = session_2)) +
-  geom_point(aes(color = density_12, size = density_12)) +
-  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red", midpoint = 4) +
-  scale_size(range = c(1,5), guide = "none") +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-  scale_x_continuous(labels = label_percent(accuracy = 1)) +
-  scale_y_continuous(labels = label_percent(accuracy = 1)) +
-  labs(x = "Knower choice session 1", y = "Knower choice session 2", color = "Number of dogs overlapping") +
-  ggtitle("S1 - S2") +
-  theme_minimal() +
-  theme(plot.title = element_text(face = "bold")) +
-  theme(plot.title = element_text(hjust = 0.5))
-S1_S2_p
-
-#session_1 vs session_3
-S1_S3_p <- ggplot(scores_wide, aes(x = session_1, y = session_3)) +
-  geom_point(aes(color = density_13, size = density_13)) +
-  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red", midpoint = 4) +
-  scale_size(range = c(1,5), guide = "none") +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-  scale_x_continuous(labels = label_percent(accuracy = 1)) +
-  scale_y_continuous(labels = label_percent(accuracy = 1)) +
-  labs(x = "Knower choice session 1", y = "Knower choice session 3", color = "Number of dogs overlapping") +
-   ggtitle("S1 - S3") +
-  theme_minimal() +
-  theme(plot.title = element_text(face = "bold")) +
-  theme(plot.title = element_text(hjust = 0.5))
-S1_S3_p
-
-#session_2 vs session_3
-S2_S3_p <-ggplot(scores_wide, aes(x = session_2, y = session_3)) +
-  geom_point(aes(color = density_23, size = density_13)) +
-  scale_color_gradient2(low = "skyblue", mid = "plum", high = "red", midpoint = 4) +
-  scale_size(range = c(1,5), guide = "none") +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-  scale_x_continuous(labels = label_percent(accuracy = 1)) +
-  scale_y_continuous(labels = label_percent(accuracy = 1)) +
-  labs(x = "Knower choice session 2", y = "Knower choice session 3", color = "Number of dogs overlapping") +
-  ggtitle("S2 - S3") +
-  theme_minimal() +
-  theme(plot.title = element_text(face = "bold")) +
-  theme(plot.title = element_text(hjust = 0.5))
-  
-S2_S3_p 
-```
-#Save the correlations across sessions plots
-```{r}
-#save the barplot
-ggsave(S1_S2_p, filename = "plots/density_plot_corr_S1_S2.png", width = 10, height = 6, scale = 0.8, bg = "white")
-
-ggsave(S1_S3_p, filename = "plots/density_plot_corr_S1_S3.png", width = 10, height = 6, scale = 0.8, bg = "white")
-
-ggsave(S2_S3_p, filename = "plots/density_plot_corr_S2_S3.png", width = 10, height = 6, scale = 0.8, bg = "white")
-```
-
-```{r}
-library(cowplot)
-test_retest_p <- 
-  plot_grid(
-  S1_S2_p, S1_S3_p, S2_S3_p, align = "v", 
-  labels = "AUTO", ncol = 1)
-
-test_retest_p
-```
-#Save test-retest plot
-  1
-```{r}
-ggsave(test_retest_p, filename = "plots/density_plot_test_re-test_rel.png", width = 12, height = 15, scale = 0.6, bg = "white", dpi=1200) 
 ```
 
 #Between conditions, pooled across all 3 sessions 
@@ -2357,7 +2257,7 @@ print(paste("95% CI for probability:", round(confint_prob.sbm, 3)))
 side.pref.model.data <- xdata %>%
   filter(condition!="present") %>%
   droplevels() %>% 
-  group_by(dog_name) %>% #LL: and session?
+  group_by(dog_name) %>% 
   mutate(
     sum_L = sum(choice_LR == "L", na.rm = TRUE),
     sum_R = sum(choice_LR == "R", na.rm = TRUE),
@@ -2694,10 +2594,6 @@ For each test trial (excluding the first trial in each condition block), we calc
 # Save startegies plot
 ```{r}
 ggsave(strategies.p, filename = "plots/win_stay_lose_shift_strategies.png", width = 10, height = 10, scale=0.8, bg = "white", dpi=1200) 
-```
-#### switches between cups
-```{r}
-#LL: create left-right cup chosen varibale and re-do the above analyses
 ```
 
 # Inter-observer reliability (choice - binary variable)
